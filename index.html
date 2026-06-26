@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Benchmark de Precios · LCA</title>
+
+<!-- Librerías (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+/* ===========  TEMA  =========== */
+:root{
+  --teal-900:#13494a; --teal-700:#1d6b6b; --teal-600:#268585; --teal-500:#2f9c9a;
+  --teal-100:#e4f2f1; --accent:#e8a33d;
+  --ink:#1b2a2a; --muted:#5d7373; --line:#d8e3e2; --bg:#f4f7f6; --card:#ffffff;
+  --ok:#1f8a5b; --bad:#c0413b; --shadow:0 1px 3px rgba(19,73,74,.08),0 6px 18px rgba(19,73,74,.06);
+  --radius:14px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  font-family:'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  color:var(--ink); background:var(--bg); font-size:15px; -webkit-text-size-adjust:100%;
+}
+h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.2px}
+button{font-family:inherit;cursor:pointer}
+input,select,button,textarea{font-family:inherit;font-size:14px}
+a{color:var(--teal-600)}
+.hidden{display:none!important}
+
+/* ===========  BOTONES / CONTROLES  =========== */
+.btn{border:1px solid var(--teal-600);background:var(--teal-600);color:#fff;padding:9px 16px;
+  border-radius:10px;font-weight:600;transition:.15s;white-space:nowrap}
+.btn:hover{background:var(--teal-700);border-color:var(--teal-700)}
+.btn.ghost{background:#fff;color:var(--teal-700)}
+.btn.ghost:hover{background:var(--teal-100)}
+.btn.sm{padding:6px 11px;border-radius:8px;font-size:13px}
+.btn.danger{background:#fff;color:var(--bad);border-color:var(--bad)}
+.btn.danger:hover{background:#fbeceb}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.field label{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.field input,.field select,.field textarea{
+  padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;width:100%}
+.field input:focus,.field select:focus,.field textarea:focus{outline:2px solid var(--teal-500);border-color:var(--teal-500)}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row>.field{flex:1;min-width:160px}
+
+/* ===========  LOGIN  =========== */
+#login{min-height:100vh;display:grid;place-items:center;
+  background:radial-gradient(120% 120% at 0% 0%,var(--teal-700),var(--teal-900))}
+.login-card{background:#fff;border-radius:18px;box-shadow:var(--shadow);padding:34px 30px;width:min(380px,92vw)}
+.login-card .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.login-card .dot{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--teal-500),var(--teal-700))}
+.login-card h1{font-size:20px}
+.login-card p.sub{color:var(--muted);font-size:13px;margin:2px 0 22px}
+.err{background:#fbeceb;color:var(--bad);border:1px solid #f1c9c6;padding:9px 12px;border-radius:9px;font-size:13px;margin-bottom:12px}
+
+/* ===========  SHELL  =========== */
+#app{min-height:100vh;display:flex;flex-direction:column}
+header.top{background:linear-gradient(90deg,var(--teal-700),var(--teal-600));color:#fff;
+  display:flex;align-items:center;gap:14px;padding:0 18px;height:56px;flex-shrink:0}
+header.top .dot{width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.22)}
+header.top h1{font-size:17px}
+header.top .spacer{flex:1}
+.usertag{display:flex;align-items:center;gap:9px;font-size:13px}
+.badge{background:rgba(255,255,255,.18);padding:3px 9px;border-radius:20px;font-size:11px;
+  text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+
+nav.main{background:#fff;border-bottom:1px solid var(--line);display:flex;gap:2px;padding:0 14px;
+  overflow-x:auto;flex-shrink:0}
+nav.main button{background:none;border:none;padding:14px 16px;color:var(--muted);font-weight:600;
+  border-bottom:3px solid transparent;white-space:nowrap}
+nav.main button.active{color:var(--teal-700);border-bottom-color:var(--teal-600)}
+
+main{flex:1;padding:20px;max-width:1500px;width:100%;margin:0 auto}
+
+.subnav{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+.subnav button{background:#fff;border:1px solid var(--line);padding:8px 15px;border-radius:20px;
+  color:var(--muted);font-weight:600}
+.subnav button.active{background:var(--teal-700);color:#fff;border-color:var(--teal-700)}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.card .card-h{padding:13px 18px;border-bottom:1px solid var(--line);font-weight:650;
+  display:flex;align-items:center;gap:10px;color:var(--teal-900)}
+.card .card-b{padding:18px}
+
+/* ===========  TABLAS  =========== */
+.table-wrap{overflow:auto;border-radius:12px;border:1px solid var(--line);background:#fff}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{background:var(--teal-700);color:#fff;text-align:left;padding:10px 12px;font-weight:600;
+  position:sticky;top:0;white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+tbody tr:hover{background:var(--teal-100)}
+tbody tr.sel{background:#d3ebe9}
+tr.clickable{cursor:pointer}
+.chip{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
+.chip.act{background:#e2f4ec;color:var(--ok)} .chip.obs{background:#f3e6e5;color:var(--bad)}
+.pill-gama{background:var(--teal-100);color:var(--teal-700);padding:2px 9px;border-radius:6px;font-size:12px;font-weight:600}
+.best{color:var(--ok);font-weight:700}
+.muted{color:var(--muted)}
+
+/* ===========  LAYOUT ANÁLISIS (2 paneles)  =========== */
+.split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:18px;align-items:start}
+@media(max-width:980px){.split{grid-template-columns:1fr}}
+
+.detail-img{width:100%;max-height:230px;object-fit:contain;background:#f7faf9;border-radius:10px;border:1px solid var(--line)}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.kv .k{background:#f2f7f6;padding:7px 11px;font-size:12.5px;color:var(--muted);font-weight:600}
+.kv .v{background:#fff;padding:7px 11px;font-size:13px}
+@media(max-width:520px){.kv{grid-template-columns:1fr}}
+
+.stat{display:flex;flex-direction:column;gap:2px;background:#0d3536;color:#fff;border-radius:10px;padding:11px 13px;min-width:120px}
+.stat .lbl{font-size:11px;opacity:.75;text-transform:uppercase;letter-spacing:.4px}
+.stat .val{font-size:17px;font-weight:700}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+
+/* ===========  GALERÍA PROMOS  =========== */
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.promo{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);position:relative}
+.promo img{width:100%;aspect-ratio:4/5;object-fit:cover;display:block;background:#eee}
+.promo .meta{padding:9px 11px}
+.promo .meta .t{font-weight:600;font-size:13px}
+.promo .meta .p{font-size:12px;color:var(--muted)}
+.promo .del{position:absolute;top:8px;right:8px}
+
+/* ===========  TOAST / MODAL  =========== */
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#0d3536;color:#fff;
+  padding:11px 18px;border-radius:10px;box-shadow:var(--shadow);opacity:0;pointer-events:none;
+  transition:.25s;z-index:60;max-width:90vw}
+#toast.show{opacity:1}
+#toast.bad{background:var(--bad)}
+.modal-bg{position:fixed;inset:0;background:rgba(13,53,54,.45);display:grid;place-items:center;z-index:50;padding:16px}
+.modal{background:#fff;border-radius:16px;box-shadow:var(--shadow);width:min(560px,96vw);max-height:90vh;overflow:auto}
+.modal .m-h{padding:15px 20px;border-bottom:1px solid var(--line);font-weight:650;display:flex;align-items:center}
+.modal .m-h .x{margin-left:auto;background:none;border:none;font-size:22px;color:var(--muted);line-height:1}
+.modal .m-b{padding:20px}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+.loader{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-3px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px}
+.toolbar .field{margin-bottom:0}
+</style>
+</head>
+<body>
+
+<!-- =====================================================  CONFIG  -->
+<script>
+/* ╔══════════════════════════════════════════════════════════════╗
+   ║  1) Pega aquí los datos de TU proyecto Supabase                ║
+   ║     (Project Settings -> API)                                  ║
+   ╚══════════════════════════════════════════════════════════════╝ */
+const SUPABASE_URL  = "https://fhfqnvfkhaivgjarzvli.supabase.co";
+const SUPABASE_ANON = "sb_publishable_5X7JnVAMrlT-4UNexjHyaQ_YDecAoyV";
+/* La service_role NO va aquí. La gestión de usuarios usa la Edge Function. */
+</script>
+
+<!-- =====================================================  LOGIN  -->
+<div id="login">
+  <form class="login-card" id="loginForm" autocomplete="on">
+    <div class="brand"><div class="dot"></div><h1>Benchmark de Precios</h1></div>
+    <p class="sub">Análisis de celulares, smartwatch y audífonos</p>
+    <div id="loginErr" class="err hidden"></div>
+    <div class="field"><label>Correo</label><input id="liEmail" type="email" required placeholder="correo@dominio.com"></div>
+    <div class="field"><label>Contraseña</label><input id="liPass" type="password" required placeholder="••••••••"></div>
+    <button class="btn" id="liBtn" style="width:100%;margin-top:6px" type="submit">Ingresar</button>
+  </form>
+</div>
+
+<!-- =====================================================  APP  -->
+<div id="app" class="hidden">
+  <header class="top">
+    <div class="dot"></div>
+    <h1>Benchmark de Precios</h1>
+    <div class="spacer"></div>
+    <div class="usertag">
+      <span id="uName"></span><span class="badge" id="uRole"></span>
+      <button class="btn ghost sm" id="logoutBtn">Salir</button>
+    </div>
+  </header>
+  <nav class="main" id="mainNav"></nav>
+  <main id="view"></main>
+</div>
+
+<div id="toast"></div>
+<div id="modalRoot"></div>
+
+<!-- =====================================================  LÓGICA  -->
+<script>
+/* ===================  CATÁLOGOS DE CARACTERÍSTICAS  =================== */
+const CATALOGO = {
+  celular: ['Tamaño Pantalla','Tipo de Pantalla','Definicion de la Pantalla','Resolucion Pantalla',
+    'Proteccion Pantalla','Bateria','Sistema Operativo','Chipset','Velocidad Procesador','RAM','ROM',
+    'Memoria Expandible','Camara Principal','Camara Selfie','NFC','Red','Lector de Huella','Resistencia al agua'],
+  smartwatch: ['Compatibilidad','Profundidad','Peso','Bluetooth','Localizacion','NFC','Resistencia al agua',
+    'Profundidad en agua','Capacidad de la bateria','Duracion de la bateria','Diseno','Pantalla Touch',
+    'Tamano de la pantalla','Tipo de pantalla','Resolucion de pantalla','Garantia'],
+  audifono: ['Alcance','Cancelacion de ruido','Compatibilidad','Grado de proteccion','Contestador de llamadas',
+    'Control de volumen','Impedancia','Resistencia al agua','Peso','Duracion de la bateria','Tiempo de carga','Garantia']
+};
+const TIPO_LABEL = { celular:'Celulares', smartwatch:'SmartWatch', audifono:'Audífonos' };
+const TIPO_SING  = { celular:'Celular',  smartwatch:'SmartWatch', audifono:'Audífono'  };
+const GAMAS = ['Gama Baja','Gama Media','Gama Media-Alta','Gama Alta','Premium'];
+
+/* ===================  CLIENTE + ESTADO  =================== */
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+const state = {
+  perfil:null, productos:[], proveedores:[], precios:[], promociones:[],
+  provById:{}, tipoActual:'celular', seleccion:null, chart:null, editId:null,
+  anioFiltro:null, anioActivo:'TODOS'
+};
+const esAdmin  = () => state.perfil && (state.perfil.rol==='admin' || state.perfil.rol==='super');
+const esSuper  = () => state.perfil && state.perfil.rol==='super';
+
+/* ===================  HELPERS  =================== */
+const $ = (s,r=document)=>r.querySelector(s);
+const money = v => v==null||v===''?'—':new Intl.NumberFormat('es-CR',{style:'currency',currency:'CRC',maximumFractionDigits:0}).format(v);
+const fecha = d => d? new Date(d+'T00:00:00').toLocaleDateString('es-CR',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(msg,bad=false){const t=$('#toast');t.textContent=msg;t.className='show'+(bad?' bad':'');setTimeout(()=>t.className='',2600);}
+function modal(title,bodyHTML){
+  const root=$('#modalRoot');
+  root.innerHTML=`<div class="modal-bg"><div class="modal"><div class="m-h">${esc(title)}<button class="x">&times;</button></div><div class="m-b">${bodyHTML}</div></div></div>`;
+  const close=()=>root.innerHTML='';
+  root.querySelector('.x').onclick=close;
+  root.querySelector('.modal-bg').onclick=e=>{if(e.target.classList.contains('modal-bg'))close();};
+  return {root,close};
+}
+
+/* ===================  AUTENTICACIÓN  =================== */
+$('#loginForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const btn=$('#liBtn'); const err=$('#loginErr'); err.classList.add('hidden');
+  btn.disabled=true; btn.innerHTML='<span class="loader"></span> Ingresando…';
+  const { data, error } = await sb.auth.signInWithPassword({ email:$('#liEmail').value.trim(), password:$('#liPass').value });
+  btn.disabled=false; btn.textContent='Ingresar';
+  if(error){ err.textContent='Correo o contraseña incorrectos.'; err.classList.remove('hidden'); return; }
+  await iniciarSesion();
+});
+$('#logoutBtn').addEventListener('click', async ()=>{ await sb.auth.signOut(); location.reload(); });
+
+async function iniciarSesion(){
+  const { data:{ user } } = await sb.auth.getUser();
+  if(!user) return;
+  const { data:perfil } = await sb.from('perfiles').select('*').eq('id',user.id).single();
+  if(!perfil || perfil.activo===false){
+    await sb.auth.signOut();
+    $('#loginErr').textContent='Tu usuario está inactivo. Contacta al administrador.';
+    $('#loginErr').classList.remove('hidden'); return;
+  }
+  state.perfil=perfil;
+  $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $('#uName').textContent=perfil.nombre||perfil.email;
+  $('#uRole').textContent=perfil.rol;
+  await cargarTodo();
+  construirNav();
+  irA('analisis');
+}
+
+/* ===================  CARGA DE DATOS  =================== */
+async function cargarTodo(){
+  const [prov,prod,prec,promo] = await Promise.all([
+    sb.from('proveedores').select('*').order('nombre'),
+    sb.from('productos').select('*').order('marca').order('modelo'),
+    sb.from('precios').select('*'),
+    sb.from('promociones').select('*').order('orden').order('creado_en',{ascending:false})
+  ]);
+  state.proveedores = prov.data||[];
+  state.productos   = prod.data||[];
+  state.precios     = prec.data||[];
+  state.promociones = promo.data||[];
+  state.provById={}; state.proveedores.forEach(p=>state.provById[p.id]=p);
+}
+
+/* ===================  CÁLCULOS DE PRECIOS  =================== */
+const preciosDe = pid => state.precios.filter(p=>p.producto_id===pid);
+const anioDe = p => (p.anio!=null) ? p.anio : (p.fecha ? +String(p.fecha).slice(0,4) : null);
+const aniosDe = pid => [...new Set(preciosDe(pid).map(anioDe).filter(a=>a!=null))].sort((a,b)=>b-a);
+function preciosFiltrados(pid){
+  const a=state.anioActivo;
+  return preciosDe(pid).filter(p=> a==null || a==='TODOS' || anioDe(p)===a);
+}
+function ultimosPorProveedor(pid){
+  const map={};
+  preciosFiltrados(pid).forEach(p=>{
+    const key=(p.semana??0)*1e9 + (p.fecha?new Date(p.fecha).getTime()/1e5:0);
+    if(!map[p.proveedor_id] || key>map[p.proveedor_id]._k) map[p.proveedor_id]={...p,_k:key};
+  });
+  return Object.values(map);
+}
+function mejorPrecio(pid){
+  const v=ultimosPorProveedor(pid).map(p=>p.promocion??p.precio).filter(x=>x!=null);
+  return v.length?Math.min(...v):null;
+}
+function mejorPrecioGlobal(pid){
+  const v=preciosDe(pid).map(p=>p.promocion??p.precio).filter(x=>x!=null);
+  return v.length?Math.min(...v):null;
+}
+
+/* ===================  NAVEGACIÓN  =================== */
+function construirNav(){
+  const items=[['analisis','Análisis'],['promociones','Promociones'],['exportar','Exportar']];
+  if(esAdmin()) items.push(['admin','Administración']);
+  if(esSuper()) items.push(['usuarios','Usuarios']);
+  $('#mainNav').innerHTML=items.map(([k,l])=>`<button data-nav="${k}">${l}</button>`).join('');
+  $('#mainNav').querySelectorAll('button').forEach(b=>b.onclick=()=>irA(b.dataset.nav));
+}
+function irA(seccion){
+  $('#mainNav').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.nav===seccion));
+  const v=$('#view'); state.chart&&state.chart.destroy(); state.chart=null;
+  ({analisis:vAnalisis,promociones:vPromos,exportar:vExportar,admin:vAdmin,usuarios:vUsuarios}[seccion])(v);
+}
+
+/* ===================  VISTA: ANÁLISIS  =================== */
+function vAnalisis(v){
+  v.innerHTML=`
+    <div class="subnav" id="tipoNav"></div>
+    <div class="toolbar">
+      <div class="field"><label>Buscar</label><input id="qBuscar" placeholder="Marca o modelo…"></div>
+      <div class="field"><label>Marca</label><select id="qMarca"></select></div>
+      <div class="field"><label>Gama</label><select id="qGama"></select></div>
+      <div class="field"><label>Estado</label><select id="qEstado">
+        <option value="">Todos</option><option>Activo</option><option>Obsoleto</option></select></div>
+    </div>
+    <div class="split">
+      <div class="card"><div class="card-h">Modelos · <span id="cntModelos" class="muted"></span></div>
+        <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:60vh;border:0">
+          <table id="tblModelos"></table></div></div></div>
+      <div id="detalle"></div>
+    </div>`;
+  $('#tipoNav').innerHTML=Object.keys(TIPO_LABEL).map(t=>`<button data-t="${t}">${TIPO_LABEL[t]}</button>`).join('');
+  $('#tipoNav').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.tipoActual=b.dataset.t;state.seleccion=null;pintarAnalisis();});
+  ['qBuscar','qMarca','qGama','qEstado'].forEach(id=>$('#'+id).oninput=pintarFilaModelos);
+  pintarAnalisis();
+}
+function pintarAnalisis(){
+  $('#tipoNav').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.t===state.tipoActual));
+  const lista=state.productos.filter(p=>p.tipo===state.tipoActual);
+  const marcas=[...new Set(lista.map(p=>p.marca))].sort();
+  $('#qMarca').innerHTML='<option value="">Todas</option>'+marcas.map(m=>`<option>${esc(m)}</option>`).join('');
+  const gamas=[...new Set(lista.map(p=>p.gama).filter(Boolean))];
+  $('#qGama').innerHTML='<option value="">Todas</option>'+gamas.map(g=>`<option>${esc(g)}</option>`).join('');
+  pintarFilaModelos(); renderDetalle();
+}
+function pintarFilaModelos(){
+  const q=($('#qBuscar')?.value||'').toLowerCase(), fm=$('#qMarca')?.value, fg=$('#qGama')?.value, fe=$('#qEstado')?.value;
+  let lista=state.productos.filter(p=>p.tipo===state.tipoActual);
+  if(q) lista=lista.filter(p=>(p.marca+' '+p.modelo).toLowerCase().includes(q));
+  if(fm) lista=lista.filter(p=>p.marca===fm);
+  if(fg) lista=lista.filter(p=>p.gama===fg);
+  if(fe) lista=lista.filter(p=>p.estado===fe);
+  $('#cntModelos').textContent=lista.length+' resultado'+(lista.length===1?'':'s');
+  const head=`<thead><tr><th>Marca</th><th>Modelo</th><th>Gama</th><th>Estado</th><th>Mejor precio</th></tr></thead>`;
+  const body=lista.map(p=>{
+    const mp=mejorPrecio(p.id);
+    return `<tr class="clickable ${state.seleccion===p.id?'sel':''}" data-id="${p.id}">
+      <td>${esc(p.marca)}</td><td><b>${esc(p.modelo)}</b></td>
+      <td>${p.gama?`<span class="pill-gama">${esc(p.gama)}</span>`:'—'}</td>
+      <td><span class="chip ${p.estado==='Activo'?'act':'obs'}">${esc(p.estado)}</span></td>
+      <td>${mp!=null?`<span class="best">${money(mp)}</span>`:'—'}</td></tr>`;
+  }).join('') || `<tr><td colspan="5" class="empty">Sin modelos. Agrégalos en Administración.</td></tr>`;
+  $('#tblModelos').innerHTML=head+'<tbody>'+body+'</tbody>';
+  $('#tblModelos').querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>{state.seleccion=+tr.dataset.id;state.anioFiltro=null;pintarFilaModelos();renderDetalle();});
+}
+function renderDetalle(){
+  const d=$('#detalle'); state.chart&&state.chart.destroy(); state.chart=null;
+  const p=state.productos.find(x=>x.id===state.seleccion);
+  if(!p){ d.innerHTML=`<div class="card"><div class="empty">Selecciona un modelo para ver el análisis detallado.</div></div>`; return; }
+  const campos=CATALOGO[p.tipo];
+  const kv=campos.map(c=>`<div class="k">${esc(c)}</div><div class="v">${esc(p.caracteristicas?.[c]||'—')}</div>`).join('');
+  const anios=aniosDe(p.id);
+  state.anioActivo = (state.anioFiltro==null) ? (anios[0] ?? 'TODOS') : state.anioFiltro;
+  const ult=ultimosPorProveedor(p.id);
+  const mp=mejorPrecio(p.id);
+  const filas=ult.sort((a,b)=>(a.promocion??a.precio??1e15)-(b.promocion??b.precio??1e15)).map(x=>{
+    const efectivo=x.promocion??x.precio;
+    return `<tr><td><b>${esc(state.provById[x.proveedor_id]?.nombre||'?')}</b></td>
+      <td>${money(x.precio)}</td>
+      <td>${x.promocion!=null?money(x.promocion):'—'}</td>
+      <td class="${efectivo===mp?'best':''}">${money(efectivo)}</td>
+      <td class="muted">${x.semana!=null?('S'+x.semana+' · '+(anioDe(x)??'')):fecha(x.fecha)}</td></tr>`;
+  }).join('') || `<tr><td colspan="5" class="empty">Sin precios para el año seleccionado.</td></tr>`;
+
+  const selAnio = anios.length ? `
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
+          <label style="font-size:13px;color:var(--muted)">Año</label>
+          <select id="filtroAnio" style="width:auto;min-width:120px">
+            ${anios.map(y=>`<option value="${y}" ${String(state.anioActivo)===String(y)?'selected':''}>${y}</option>`).join('')}
+            <option value="TODOS" ${state.anioActivo==='TODOS'?'selected':''}>Todos los años</option>
+          </select>
+        </div>` : '';
+
+  d.innerHTML=`
+    <div class="card">
+      <div class="card-h">${esc(p.marca)} · ${esc(p.modelo)}</div>
+      <div class="card-b">
+        ${p.imagen_url?`<img class="detail-img" src="${esc(p.imagen_url)}" alt="">`:''}
+        <div class="stats" style="margin-top:14px">
+          <div class="stat"><span class="lbl">Mejor precio</span><span class="val">${money(mp)}</span></div>
+          <div class="stat"><span class="lbl">Proveedores</span><span class="val">${ult.length}</span></div>
+          <div class="stat"><span class="lbl">Gama</span><span class="val" style="font-size:14px">${esc(p.gama||'—')}</span></div>
+        </div>
+        <h3 style="font-size:14px;color:var(--teal-900);margin:6px 0 8px">Precios por proveedor</h3>
+        ${selAnio}
+        <div class="table-wrap"><table>
+          <thead><tr><th>Proveedor</th><th>Precio</th><th>Promoción</th><th>Efectivo</th><th>Periodo</th></tr></thead>
+          <tbody>${filas}</tbody></table></div>
+        <h3 style="font-size:14px;color:var(--teal-900);margin:18px 0 8px">Evolución por semana${state.anioActivo==='TODOS'?'':' · '+state.anioActivo}</h3>
+        <div style="position:relative;height:230px"><canvas id="chartPrecio"></canvas></div>
+        <details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-size:13px">Ver todas las características</summary>
+          <div class="kv" style="margin-top:10px">${kv}</div></details>
+      </div>
+    </div>`;
+  const selA=$('#filtroAnio');
+  if(selA) selA.onchange=e=>{ const v=e.target.value; state.anioFiltro = (v==='TODOS')?'TODOS':+v; renderDetalle(); };
+  dibujarChart(p.id);
+}
+function dibujarChart(pid){
+  const rows=preciosFiltrados(pid);
+  if(!rows.length) return;
+  const multi = state.anioActivo==='TODOS';
+  const keyOf = r => (r.semana!=null) ? (anioDe(r)+'-S'+String(r.semana).padStart(2,'0')) : ('F'+r.fecha);
+  const labelOf = r => (r.semana!=null) ? (multi ? ('S'+r.semana+'·'+anioDe(r)) : ('Semana '+r.semana)) : fecha(r.fecha);
+  const seen=new Map();
+  rows.forEach(r=>{ const k=keyOf(r); if(!seen.has(k)) seen.set(k,{k,label:labelOf(r),anio:anioDe(r)??0,sem:r.semana,fecha:r.fecha}); });
+  const xs=[...seen.values()].sort((a,b)=> (a.anio-b.anio) || ((a.sem??1e9)-(b.sem??1e9)) || (new Date(a.fecha)-new Date(b.fecha)));
+  const palette=['#1d6b6b','#e8a33d','#3b7dd8','#c0413b','#7a4fb5','#1f8a5b','#d56aa0'];
+  const provIds=[...new Set(rows.map(r=>r.proveedor_id))];
+  const datasets=provIds.map((id,i)=>{
+    const data=xs.map(x=>{
+      const r=rows.find(r=> r.proveedor_id===id && keyOf(r)===x.k);
+      return r? (r.promocion??r.precio) : null;
+    });
+    return {label:state.provById[id]?.nombre||'?',data,borderColor:palette[i%palette.length],
+      backgroundColor:palette[i%palette.length],tension:.25,spanGaps:true,pointRadius:3};
+  });
+  state.chart=new Chart($('#chartPrecio'),{
+    type:'line',
+    data:{labels:xs.map(x=>x.label),datasets},
+    options:{maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}},
+        tooltip:{callbacks:{label:c=>c.dataset.label+': '+money(c.parsed.y)}}},
+      scales:{y:{ticks:{callback:v=>'₡'+(v/1000)+'k'}}}}
+  });
+}
+
+/* ===================  VISTA: PROMOCIONES  =================== */
+function vPromos(v){
+  const tipos=['','celular','smartwatch','audifono'];
+  v.innerHTML=`<div class="subnav" id="promoNav">
+      <button data-pt="" class="active">Todas</button>
+      ${['celular','smartwatch','audifono'].map(t=>`<button data-pt="${t}">${TIPO_LABEL[t]}</button>`).join('')}
+    </div><div id="promoGrid"></div>`;
+  v.querySelectorAll('#promoNav button').forEach(b=>b.onclick=()=>{
+    v.querySelectorAll('#promoNav button').forEach(x=>x.classList.toggle('active',x===b));
+    pintarPromos(b.dataset.pt);
+  });
+  pintarPromos('');
+}
+function pintarPromos(tipo){
+  let list=state.promociones.filter(p=>p.activo!==false);
+  if(tipo) list=list.filter(p=>p.tipo===tipo);
+  $('#promoGrid').innerHTML = list.length? `<div class="gallery">`+list.map(p=>`
+    <div class="promo">
+      ${esAdmin()?`<button class="btn danger sm del" data-del="${p.id}">Eliminar</button>`:''}
+      <img src="${esc(p.imagen_url)}" alt="${esc(p.titulo||'')}">
+      <div class="meta"><div class="t">${esc(p.titulo||'Promoción')}</div>
+        <div class="p">${p.proveedor_id?esc(state.provById[p.proveedor_id]?.nombre||''):''}${p.tipo?' · '+TIPO_LABEL[p.tipo]:''}</div></div>
+    </div>`).join('')+`</div>`
+    : `<div class="card"><div class="empty">No hay promociones cargadas.</div></div>`;
+  $('#promoGrid').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
+    if(!confirm('¿Eliminar esta promoción?'))return;
+    await sb.from('promociones').delete().eq('id',b.dataset.del);
+    state.promociones=state.promociones.filter(x=>x.id!=b.dataset.del); pintarPromos(tipo); toast('Promoción eliminada');
+  });
+}
+
+/* ===================  VISTA: EXPORTAR  =================== */
+function vExportar(v){
+  v.innerHTML=`<div class="card" style="max-width:620px"><div class="card-h">Exportar datos</div><div class="card-b">
+    <p class="muted" style="margin-top:0">Elige el conjunto de datos y el formato. El CSV usa <b>;</b> como separador (compatible con Excel en español).</p>
+    <div class="field"><label>Conjunto de datos</label><select id="exDataset">
+      <option value="celular">Catálogo · Celulares</option>
+      <option value="smartwatch">Catálogo · SmartWatch</option>
+      <option value="audifono">Catálogo · Audífonos</option>
+      <option value="precios">Precios por proveedor (formato largo)</option>
+      <option value="promociones">Promociones</option>
+    </select></div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn" id="exCsv">Descargar CSV (;)</button>
+      <button class="btn ghost" id="exXlsx">Descargar Excel</button>
+    </div></div></div>`;
+  $('#exCsv').onclick=()=>exportar('csv');
+  $('#exXlsx').onclick=()=>exportar('xlsx');
+}
+function datasetExport(key){
+  if(key==='precios'){
+    const rows=state.precios.map(p=>{
+      const prod=state.productos.find(x=>x.id===p.producto_id)||{};
+      return {Tipo:TIPO_SING[prod.tipo]||'',Marca:prod.marca||'',Modelo:prod.modelo||'',
+        Proveedor:state.provById[p.proveedor_id]?.nombre||'',Anio:anioDe(p)??'',Semana:p.semana??'',Fecha:p.fecha||'',
+        Precio:p.precio??'',Promocion:p.promocion??''};
+    });
+    return {nombre:'Precios',rows};
+  }
+  if(key==='promociones'){
+    const rows=state.promociones.map(p=>({Titulo:p.titulo||'',Tipo:TIPO_LABEL[p.tipo]||'',
+      Proveedor:state.provById[p.proveedor_id]?.nombre||'',Imagen:p.imagen_url||''}));
+    return {nombre:'Promociones',rows};
+  }
+  const campos=CATALOGO[key];
+  const rows=state.productos.filter(p=>p.tipo===key).map(p=>{
+    const o={Marca:p.marca,Modelo:p.modelo,Gama:p.gama||'',Estado:p.estado};
+    campos.forEach(c=>o[c]=p.caracteristicas?.[c]||'');
+    o['Mejor precio']=mejorPrecioGlobal(p.id)??''; return o;
+  });
+  return {nombre:TIPO_LABEL[key],rows};
+}
+function exportar(fmt){
+  const key=$('#exDataset').value; const {nombre,rows}=datasetExport(key);
+  if(!rows.length){toast('No hay datos para exportar',true);return;}
+  if(fmt==='xlsx'){
+    const ws=XLSX.utils.json_to_sheet(rows); const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,nombre.slice(0,31)); XLSX.writeFile(wb,`benchmark_${key}.xlsx`);
+  }else{
+    const cols=Object.keys(rows[0]);
+    const q=s=>{s=s==null?'':String(s); return /[;"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+    const csv=[cols.join(';')].concat(rows.map(r=>cols.map(c=>q(r[c])).join(';'))).join('\r\n');
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`benchmark_${key}.csv`; a.click();
+  }
+  toast('Descarga generada');
+}
+
+/* ===================  SUBIR IMAGEN A STORAGE  =================== */
+async function subirImagen(file,carpeta){
+  const limpio=file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+  const path=`${carpeta}/${Date.now()}_${limpio}`;
+  const { error }=await sb.storage.from('benchmark').upload(path,file,{upsert:false});
+  if(error) throw error;
+  return sb.storage.from('benchmark').getPublicUrl(path).data.publicUrl;
+}
+
+/* ===================  VISTA: ADMINISTRACIÓN  =================== */
+function vAdmin(v){
+  v.innerHTML=`<div class="subnav" id="adminNav">
+      <button data-a="modelos" class="active">Modelos</button>
+      <button data-a="precios">Precios</button>
+      <button data-a="proveedores">Proveedores</button>
+      <button data-a="promos">Promociones</button>
+    </div><div id="adminBody"></div>`;
+  const nav=$('#adminNav');
+  nav.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    nav.querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
+    ({modelos:aModelos,precios:aPrecios,proveedores:aProveedores,promos:aPromos}[b.dataset.a])();
+  });
+  aModelos();
+}
+
+/* ---- Admin · Modelos ---- */
+function aModelos(){
+  state.editId=null;
+  $('#adminBody').innerHTML=`
+   <div class="split">
+    <div class="card"><div class="card-h" id="formTitulo">Nuevo modelo</div><div class="card-b">
+      <div class="row">
+        <div class="field"><label>Tipo</label><select id="mTipo">
+          ${Object.keys(TIPO_LABEL).map(t=>`<option value="${t}">${TIPO_SING[t]}</option>`).join('')}</select></div>
+        <div class="field"><label>Estado</label><select id="mEstado"><option>Activo</option><option>Obsoleto</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Marca</label><input id="mMarca" placeholder="APPLE"></div>
+        <div class="field"><label>Modelo</label><input id="mModelo" placeholder="iPhone 17"></div>
+      </div>
+      <div class="field"><label>Gama / Categoría</label>
+        <input id="mGama" list="gamasList" placeholder="Gama Alta">
+        <datalist id="gamasList">${GAMAS.map(g=>`<option>${g}</option>`).join('')}</datalist></div>
+      <div class="field"><label>Foto del producto</label><input id="mImg" type="file" accept="image/*">
+        <div id="mImgPrev" class="muted" style="font-size:12px"></div></div>
+      <h3 style="font-size:13px;color:var(--teal-900);margin:8px 0">Características</h3>
+      <div id="mCaract"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="mGuardar">Guardar modelo</button>
+        <button class="btn ghost hidden" id="mCancelar">Cancelar edición</button>
+      </div>
+    </div></div>
+    <div class="card"><div class="card-h">Modelos registrados · <span id="mCnt" class="muted"></span></div>
+      <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:65vh;border:0">
+        <table id="mTabla"></table></div></div></div>
+   </div>`;
+  const rebuild=()=>{ const t=$('#mTipo').value;
+    $('#mCaract').innerHTML=`<div class="row">`+CATALOGO[t].map(c=>
+      `<div class="field" style="min-width:200px"><label>${esc(c)}</label><input data-c="${esc(c)}"></div>`).join('')+`</div>`; };
+  $('#mTipo').onchange=rebuild; rebuild();
+  $('#mImg').onchange=e=>{ const f=e.target.files[0]; $('#mImgPrev').textContent=f?('Seleccionada: '+f.name):''; };
+  $('#mGuardar').onclick=guardarModelo;
+  $('#mCancelar').onclick=aModelos;
+  pintarTablaModelos();
+}
+function pintarTablaModelos(){
+  const list=state.productos.slice().sort((a,b)=>a.tipo.localeCompare(b.tipo)||a.marca.localeCompare(b.marca));
+  $('#mCnt').textContent=list.length;
+  $('#mTabla').innerHTML=`<thead><tr><th>Tipo</th><th>Marca</th><th>Modelo</th><th>Gama</th><th></th></tr></thead><tbody>`+
+    (list.map(p=>`<tr><td>${TIPO_SING[p.tipo]}</td><td>${esc(p.marca)}</td><td><b>${esc(p.modelo)}</b></td>
+      <td>${esc(p.gama||'—')}</td><td style="text-align:right">
+        <button class="btn ghost sm" data-edit="${p.id}">Editar</button>
+        <button class="btn danger sm" data-del="${p.id}">×</button></td></tr>`).join('')
+     || `<tr><td colspan="5" class="empty">Aún no hay modelos.</td></tr>`)+`</tbody>`;
+  $('#mTabla').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>cargarModeloEnForm(+b.dataset.edit));
+  $('#mTabla').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>borrarModelo(+b.dataset.del));
+}
+function cargarModeloEnForm(id){
+  const p=state.productos.find(x=>x.id===id); if(!p)return;
+  state.editId=id;
+  $('#formTitulo').textContent='Editar: '+p.marca+' '+p.modelo;
+  $('#mTipo').value=p.tipo; $('#mTipo').onchange();
+  $('#mEstado').value=p.estado; $('#mMarca').value=p.marca; $('#mModelo').value=p.modelo; $('#mGama').value=p.gama||'';
+  $('#mCaract').querySelectorAll('[data-c]').forEach(i=>{ i.value=p.caracteristicas?.[i.dataset.c]||''; });
+  $('#mCancelar').classList.remove('hidden');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+async function guardarModelo(){
+  const btn=$('#mGuardar'); const tipo=$('#mTipo').value;
+  const marca=$('#mMarca').value.trim(), modelo=$('#mModelo').value.trim();
+  if(!marca||!modelo){toast('Marca y modelo son obligatorios',true);return;}
+  const caracteristicas={};
+  $('#mCaract').querySelectorAll('[data-c]').forEach(i=>{ if(i.value.trim()) caracteristicas[i.dataset.c]=i.value.trim(); });
+  btn.disabled=true; btn.innerHTML='<span class="loader"></span> Guardando…';
+  try{
+    let imagen_url;
+    const f=$('#mImg').files[0];
+    if(f) imagen_url=await subirImagen(f,'productos');
+    const payload={tipo,marca,modelo,gama:$('#mGama').value.trim()||null,estado:$('#mEstado').value,
+      caracteristicas,actualizado_en:new Date().toISOString()};
+    if(imagen_url) payload.imagen_url=imagen_url;
+    let res;
+    if(state.editId) res=await sb.from('productos').update(payload).eq('id',state.editId).select().single();
+    else            res=await sb.from('productos').insert(payload).select().single();
+    if(res.error) throw res.error;
+    const i=state.productos.findIndex(x=>x.id===res.data.id);
+    if(i>=0) state.productos[i]=res.data; else state.productos.push(res.data);
+    toast('Modelo guardado'); aModelos();
+  }catch(e){ toast('Error: '+(e.message||e),true); }
+  finally{ btn.disabled=false; btn.textContent='Guardar modelo'; }
+}
+async function borrarModelo(id){
+  const p=state.productos.find(x=>x.id===id);
+  if(!confirm(`¿Eliminar ${p.marca} ${p.modelo}? También se borrarán sus precios.`))return;
+  const {error}=await sb.from('productos').delete().eq('id',id);
+  if(error){toast('Error: '+error.message,true);return;}
+  state.productos=state.productos.filter(x=>x.id!==id);
+  state.precios=state.precios.filter(x=>x.producto_id!==id);
+  toast('Modelo eliminado'); pintarTablaModelos();
+}
+
+/* ---- Admin · Precios ---- */
+function aPrecios(){
+  const opts=state.productos.slice().sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo))
+    .map(p=>`<option value="${p.id}">${esc(p.marca)} · ${esc(p.modelo)} (${TIPO_SING[p.tipo]})</option>`).join('');
+  const provOpts=state.proveedores.filter(p=>p.activo!==false).map(p=>`<option value="${p.id}">${esc(p.nombre)}</option>`).join('');
+  $('#adminBody').innerHTML=`
+   <div class="split">
+    <div class="card"><div class="card-h">Cargar precio</div><div class="card-b">
+      <div class="field"><label>Producto (ya creado)</label><select id="pProd">${opts||'<option value="">— sin productos —</option>'}</select></div>
+      <div class="row">
+        <div class="field"><label>Proveedor</label><select id="pProv">${provOpts}</select></div>
+        <div class="field"><label>Fecha</label><input id="pFecha" type="date"></div>
+      </div>
+      <p class="muted" style="font-size:12px;margin:-4px 0 6px">El <b>año</b> y la <b>semana</b> se calculan automáticamente a partir de la fecha.</p>
+      <div class="row">
+        <div class="field"><label>Precio (₡)</label><input id="pPrecio" type="number" min="0" placeholder="649900"></div>
+        <div class="field"><label>Promoción (₡, opcional)</label><input id="pPromo" type="number" min="0" placeholder="529900"></div>
+      </div>
+      <button class="btn" id="pGuardar">Agregar precio</button>
+    </div></div>
+    <div class="card"><div class="card-h">Últimos precios cargados</div>
+      <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:65vh;border:0"><table id="pTabla"></table></div></div></div>
+   </div>`;
+  $('#pFecha').value=new Date().toISOString().slice(0,10);
+  $('#pGuardar').onclick=guardarPrecio;
+  pintarTablaPrecios();
+}
+function pintarTablaPrecios(){
+  const list=state.precios.slice().sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,150);
+  $('#pTabla').innerHTML=`<thead><tr><th>Producto</th><th>Proveedor</th><th>Año</th><th>Sem</th><th>Precio</th><th>Promo</th><th></th></tr></thead><tbody>`+
+    (list.map(p=>{const prod=state.productos.find(x=>x.id===p.producto_id)||{};
+      return `<tr><td>${esc(prod.marca||'')} ${esc(prod.modelo||'')}</td>
+        <td>${esc(state.provById[p.proveedor_id]?.nombre||'')}</td><td>${anioDe(p)??'—'}</td><td>${p.semana??'—'}</td>
+        <td>${money(p.precio)}</td><td>${p.promocion!=null?money(p.promocion):'—'}</td>
+        <td style="text-align:right"><button class="btn danger sm" data-del="${p.id}">×</button></td></tr>`;}).join('')
+      || `<tr><td colspan="7" class="empty">Sin precios.</td></tr>`)+`</tbody>`;
+  $('#pTabla').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
+    if(!confirm('¿Eliminar este precio?'))return;
+    await sb.from('precios').delete().eq('id',b.dataset.del);
+    state.precios=state.precios.filter(x=>x.id!=b.dataset.del); pintarTablaPrecios(); toast('Precio eliminado');
+  });
+}
+async function guardarPrecio(){
+  const pid=+$('#pProd').value; if(!pid){toast('Selecciona un producto',true);return;}
+  const precio=$('#pPrecio').value, fecha=$('#pFecha').value;
+  if(!precio){toast('Ingresa el precio',true);return;}
+  if(!fecha){toast('Ingresa la fecha',true);return;}
+  const btn=$('#pGuardar'); btn.disabled=true; btn.innerHTML='<span class="loader"></span> Guardando…';
+  const payload={producto_id:pid,proveedor_id:+$('#pProv').value,fecha,
+    precio:+precio,promocion:$('#pPromo').value?+$('#pPromo').value:null};
+  const {data,error}=await sb.from('precios').insert(payload).select().single();
+  btn.disabled=false; btn.textContent='Agregar precio';
+  if(error){toast('Error: '+error.message,true);return;}
+  state.precios.push(data);
+  ['pPrecio','pPromo'].forEach(id=>$('#'+id).value='');
+  toast('Precio agregado'); pintarTablaPrecios();
+}
+
+/* ---- Admin · Proveedores ---- */
+function aProveedores(){
+  $('#adminBody').innerHTML=`
+   <div class="split">
+    <div class="card" style="max-width:420px"><div class="card-h">Nuevo proveedor</div><div class="card-b">
+      <div class="field"><label>Nombre</label><input id="prNombre" placeholder="Ej. Importadora X"></div>
+      <button class="btn" id="prGuardar">Crear proveedor</button>
+      <p class="muted" style="font-size:12.5px">Crear un proveedor ya no modifica la estructura de la base: se vuelve disponible al instante en la carga de precios.</p>
+    </div></div>
+    <div class="card"><div class="card-h">Proveedores</div>
+      <div class="card-b" style="padding:0"><div class="table-wrap" style="border:0"><table id="prTabla"></table></div></div></div>
+   </div>`;
+  $('#prGuardar').onclick=async()=>{
+    const nombre=$('#prNombre').value.trim(); if(!nombre){toast('Ingresa un nombre',true);return;}
+    const {data,error}=await sb.from('proveedores').insert({nombre}).select().single();
+    if(error){toast('Error: '+(error.code==='23505'?'ya existe ese proveedor':error.message),true);return;}
+    state.proveedores.push(data); state.provById[data.id]=data; $('#prNombre').value='';
+    toast('Proveedor creado'); pintarTablaProv();
+  };
+  pintarTablaProv();
+}
+function pintarTablaProv(){
+  $('#prTabla').innerHTML=`<thead><tr><th>Proveedor</th><th>Estado</th><th></th></tr></thead><tbody>`+
+    state.proveedores.map(p=>`<tr><td><b>${esc(p.nombre)}</b></td>
+      <td><span class="chip ${p.activo!==false?'act':'obs'}">${p.activo!==false?'Activo':'Inactivo'}</span></td>
+      <td style="text-align:right"><button class="btn ghost sm" data-tog="${p.id}">${p.activo!==false?'Desactivar':'Activar'}</button></td></tr>`).join('')+`</tbody>`;
+  $('#prTabla').querySelectorAll('[data-tog]').forEach(b=>b.onclick=async()=>{
+    const p=state.provById[+b.dataset.tog]; const nuevo=!(p.activo!==false);
+    await sb.from('proveedores').update({activo:nuevo}).eq('id',p.id);
+    p.activo=nuevo; pintarTablaProv();
+  });
+}
+
+/* ---- Admin · Promociones ---- */
+function aPromos(){
+  const provOpts='<option value="">— sin proveedor —</option>'+state.proveedores.map(p=>`<option value="${p.id}">${esc(p.nombre)}</option>`).join('');
+  $('#adminBody').innerHTML=`
+   <div class="card" style="max-width:520px;margin-bottom:18px"><div class="card-h">Agregar promoción</div><div class="card-b">
+      <div class="field"><label>Título</label><input id="poTitulo" placeholder="REDMI Note 15 Pro"></div>
+      <div class="row">
+        <div class="field"><label>Categoría</label><select id="poTipo">
+          <option value="">— general —</option>${['celular','smartwatch','audifono'].map(t=>`<option value="${t}">${TIPO_LABEL[t]}</option>`).join('')}</select></div>
+        <div class="field"><label>Proveedor</label><select id="poProv">${provOpts}</select></div>
+      </div>
+      <div class="field"><label>Imagen</label><input id="poImg" type="file" accept="image/*"></div>
+      <button class="btn" id="poGuardar">Publicar promoción</button>
+   </div></div>
+   <div id="poGrid"></div>`;
+  $('#poGuardar').onclick=async()=>{
+    const f=$('#poImg').files[0]; if(!f){toast('Selecciona una imagen',true);return;}
+    const btn=$('#poGuardar'); btn.disabled=true; btn.innerHTML='<span class="loader"></span> Subiendo…';
+    try{
+      const url=await subirImagen(f,'promos');
+      const payload={titulo:$('#poTitulo').value.trim()||null,tipo:$('#poTipo').value||null,
+        proveedor_id:$('#poProv').value?+$('#poProv').value:null,imagen_url:url};
+      const {data,error}=await sb.from('promociones').insert(payload).select().single();
+      if(error)throw error;
+      state.promociones.unshift(data); $('#poTitulo').value=''; $('#poImg').value='';
+      toast('Promoción publicada'); pintarGridAdminPromos();
+    }catch(e){toast('Error: '+(e.message||e),true);}
+    finally{btn.disabled=false;btn.textContent='Publicar promoción';}
+  };
+  pintarGridAdminPromos();
+}
+function pintarGridAdminPromos(){
+  $('#poGrid').innerHTML=state.promociones.length?`<div class="gallery">`+state.promociones.map(p=>`
+    <div class="promo"><button class="btn danger sm del" data-del="${p.id}">Eliminar</button>
+      <img src="${esc(p.imagen_url)}"><div class="meta"><div class="t">${esc(p.titulo||'Promoción')}</div>
+      <div class="p">${p.proveedor_id?esc(state.provById[p.proveedor_id]?.nombre||''):''}${p.tipo?' · '+TIPO_LABEL[p.tipo]:''}</div></div></div>`).join('')+`</div>`
+    :`<div class="card"><div class="empty">Aún no hay promociones.</div></div>`;
+  $('#poGrid').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
+    if(!confirm('¿Eliminar?'))return;
+    await sb.from('promociones').delete().eq('id',b.dataset.del);
+    state.promociones=state.promociones.filter(x=>x.id!=b.dataset.del); pintarGridAdminPromos(); toast('Eliminada');
+  });
+}
+
+/* ===================  VISTA: USUARIOS (solo super)  =================== */
+async function vUsuarios(v){
+  v.innerHTML=`<div class="card"><div class="card-h">Usuarios del sistema
+      <button class="btn sm" id="uNuevo" style="margin-left:auto">+ Nuevo usuario</button></div>
+    <div class="card-b" style="padding:0"><div class="table-wrap" style="border:0"><table id="uTabla">
+      <tbody><tr><td class="empty"><span class="loader" style="border-color:#ccc;border-top-color:var(--teal-600)"></span> Cargando…</td></tr></tbody></table></div></div></div>`;
+  $('#uNuevo').onclick=modalNuevoUsuario;
+  const {data,error}=await sb.functions.invoke('admin-users',{body:{action:'list'}});
+  if(error){$('#uTabla').innerHTML=`<tbody><tr><td class="empty">No se pudo cargar. ¿Desplegaste la Edge Function <b>admin-users</b>?</td></tr></tbody>`;return;}
+  pintarUsuarios(data.data||[]);
+}
+function pintarUsuarios(list){
+  $('#uTabla').innerHTML=`<thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>`+
+    list.map(u=>`<tr><td>${esc(u.nombre||'—')}</td><td>${esc(u.email)}</td>
+      <td><select data-rol="${u.id}" ${u.email==='kenneth.s.cr@gmail.com'?'disabled':''}>
+        ${['super','admin','usuario'].map(r=>`<option ${u.rol===r?'selected':''}>${r}</option>`).join('')}</select></td>
+      <td><span class="chip ${u.activo!==false?'act':'obs'}">${u.activo!==false?'Activo':'Inactivo'}</span></td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn ghost sm" data-pass="${u.id}">Contraseña</button>
+        ${u.email==='kenneth.s.cr@gmail.com'?'':`<button class="btn ghost sm" data-act="${u.id}" data-cur="${u.activo!==false}">${u.activo!==false?'Desactivar':'Activar'}</button>
+        <button class="btn danger sm" data-delu="${u.id}">×</button>`}</td></tr>`).join('')+`</tbody>`;
+  const tbl=$('#uTabla');
+  tbl.querySelectorAll('[data-rol]').forEach(s=>s.onchange=async()=>{
+    const {error}=await sb.functions.invoke('admin-users',{body:{action:'set_role',user_id:s.dataset.rol,rol:s.value}});
+    toast(error?'Error al cambiar rol':'Rol actualizado',!!error);
+  });
+  tbl.querySelectorAll('[data-pass]').forEach(b=>b.onclick=()=>modalPass(b.dataset.pass));
+  tbl.querySelectorAll('[data-act]').forEach(b=>b.onclick=async()=>{
+    const activar=b.dataset.cur!=='true';
+    const {error}=await sb.functions.invoke('admin-users',{body:{action:'set_active',user_id:b.dataset.act,activo:activar}});
+    if(error){toast('Error',true);return;} toast(activar?'Usuario activado':'Usuario desactivado'); vUsuarios($('#view'));
+  });
+  tbl.querySelectorAll('[data-delu]').forEach(b=>b.onclick=async()=>{
+    if(!confirm('¿Eliminar este usuario definitivamente?'))return;
+    const {error}=await sb.functions.invoke('admin-users',{body:{action:'delete',user_id:b.dataset.delu}});
+    if(error){toast('Error',true);return;} toast('Usuario eliminado'); vUsuarios($('#view'));
+  });
+}
+function modalNuevoUsuario(){
+  const m=modal('Nuevo usuario',`
+    <div class="field"><label>Nombre</label><input id="nuNombre" placeholder="Will Castro"></div>
+    <div class="field"><label>Correo</label><input id="nuEmail" type="email" placeholder="correo@dominio.com"></div>
+    <div class="row">
+      <div class="field"><label>Rol</label><select id="nuRol"><option value="usuario">usuario</option><option value="admin">admin</option><option value="super">super</option></select></div>
+      <div class="field"><label>Contraseña</label><input id="nuPass" placeholder="mínimo 6 caracteres"></div>
+    </div>
+    <button class="btn" id="nuCrear" style="width:100%">Crear usuario</button>`);
+  $('#nuCrear').onclick=async()=>{
+    const email=$('#nuEmail').value.trim(),password=$('#nuPass').value;
+    if(!email||password.length<6){toast('Correo válido y contraseña de 6+ caracteres',true);return;}
+    const btn=$('#nuCrear'); btn.disabled=true; btn.innerHTML='<span class="loader"></span> Creando…';
+    const {error}=await sb.functions.invoke('admin-users',{body:{action:'create',
+      email,password,nombre:$('#nuNombre').value.trim(),rol:$('#nuRol').value}});
+    btn.disabled=false; btn.textContent='Crear usuario';
+    if(error){toast('Error al crear usuario',true);return;}
+    m.close(); toast('Usuario creado'); vUsuarios($('#view'));
+  };
+}
+function modalPass(uid){
+  const m=modal('Reiniciar contraseña',`
+    <div class="field"><label>Nueva contraseña</label><input id="rpPass" placeholder="mínimo 6 caracteres"></div>
+    <button class="btn" id="rpOk" style="width:100%">Guardar contraseña</button>`);
+  $('#rpOk').onclick=async()=>{
+    const password=$('#rpPass').value; if(password.length<6){toast('Mínimo 6 caracteres',true);return;}
+    const {error}=await sb.functions.invoke('admin-users',{body:{action:'reset_password',user_id:uid,password}});
+    if(error){toast('Error',true);return;} m.close(); toast('Contraseña actualizada');
+  };
+}
+
+/* ===================  ARRANQUE  =================== */
+(async()=>{ const {data:{session}}=await sb.auth.getSession(); if(session) await iniciarSesion(); })();
+</script>
+</body>
+</html>
