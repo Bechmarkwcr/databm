@@ -211,8 +211,9 @@ const state = {
   perfil:null, productos:[], proveedores:[], precios:[], promociones:[],
   provById:{}, tipoActual:'celular', seleccion:null, chart:null, editId:null,
   anioFiltro:null, anioActivo:'TODOS',
-  precioSel:null, precioVerTodos:false,
-  histSel:null, histFiltro:null, histActivo:'TODOS'
+  precioSel:null, precioVerTodos:false, precioTipo:'celular', precioGamaF:'',
+  histSel:null, histFiltro:null, histActivo:'TODOS', histTipo:'celular', histGamaF:'',
+  cmpTipo:'celular', cmpA:null, cmpB:null
 };
 const esAdmin  = () => state.perfil && (state.perfil.rol==='admin' || state.perfil.rol==='super');
 const esSuper  = () => state.perfil && state.perfil.rol==='super';
@@ -318,7 +319,7 @@ function mejorPrecioGlobal(pid){
 
 /* ===================  NAVEGACIÓN  =================== */
 function construirNav(){
-  const items=[['analisis','Análisis'],['historico','Histórico de precios'],['promociones','Promocionales'],['exportar','Exportar']];
+  const items=[['analisis','Análisis'],['historico','Histórico de precios'],['comparar','Comparar'],['promociones','Promocionales'],['exportar','Exportar']];
   if(esAdmin()) items.push(['admin','Administración']);
   if(esSuper()) items.push(['usuarios','Usuarios']);
   $('#mainNav').innerHTML=items.map(([k,l])=>`<button data-nav="${k}">${l}</button>`).join('');
@@ -327,7 +328,7 @@ function construirNav(){
 function irA(seccion){
   $('#mainNav').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.nav===seccion));
   const v=$('#view'); state.chart&&state.chart.destroy(); state.chart=null;
-  ({analisis:vAnalisis,historico:vHistorico,promociones:vPromos,exportar:vExportar,admin:vAdmin,usuarios:vUsuarios}[seccion])(v);
+  ({analisis:vAnalisis,historico:vHistorico,comparar:vComparar,promociones:vPromos,exportar:vExportar,admin:vAdmin,usuarios:vUsuarios}[seccion])(v);
 }
 
 /* ===================  VISTA: ANÁLISIS  =================== */
@@ -458,18 +459,33 @@ function dibujarChart(pid, sel='#chartPrecio', scope){
 
 /* ===================  VISTA: HISTÓRICO DE PRECIOS  =================== */
 function vHistorico(v){
-  const opts=state.productos.slice()
-    .sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo))
-    .map(p=>`<option value="${p.id}" ${state.histSel===p.id?'selected':''}>${esc(p.marca)} · ${esc(p.modelo)} (${TIPO_SING[p.tipo]})</option>`).join('');
   v.innerHTML=`
-    <div class="card" style="margin-bottom:16px"><div class="card-b" style="padding:14px 16px">
-      <div class="field" style="max-width:520px;margin:0">
-        <label>Modelo</label>
-        <select id="hModelo"><option value="">— elige un modelo —</option>${opts}</select>
-      </div>
-    </div></div>
+    <div class="subnav" id="hTipoNav"></div>
+    <div class="toolbar">
+      <div class="field"><label>Gama</label><select id="hGama"></select></div>
+      <div class="field"><label>Modelo</label><select id="hModelo"></select></div>
+    </div>
     <div id="hDetalle"></div>`;
+  $('#hTipoNav').innerHTML=Object.keys(TIPO_LABEL).map(t=>`<button data-t="${t}">${TIPO_LABEL[t]}</button>`).join('');
+  $('#hTipoNav').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    state.histTipo=b.dataset.t; state.histGamaF=''; state.histSel=null; poblarHistorico(true);
+  });
+  $('#hGama').onchange=()=>{ state.histGamaF=$('#hGama').value; state.histSel=null; poblarHistorico(false); };
   $('#hModelo').onchange=e=>{ state.histSel=e.target.value?+e.target.value:null; state.histFiltro=null; renderHistorico(); };
+  poblarHistorico(true);
+}
+function poblarHistorico(rebuildGama){
+  $('#hTipoNav').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.t===state.histTipo));
+  const base=state.productos.filter(p=>p.tipo===state.histTipo);
+  if(rebuildGama){
+    const gamas=[...new Set(base.map(p=>p.gama).filter(Boolean))].sort();
+    $('#hGama').innerHTML='<option value="">Todas las gamas</option>'+gamas.map(g=>`<option ${state.histGamaF===g?'selected':''}>${esc(g)}</option>`).join('');
+  }
+  let modelos=base;
+  if(state.histGamaF) modelos=modelos.filter(p=>p.gama===state.histGamaF);
+  modelos.sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo));
+  $('#hModelo').innerHTML='<option value="">— elige un modelo —</option>'+
+    modelos.map(p=>`<option value="${p.id}" ${state.histSel===p.id?'selected':''}>${esc(p.marca)} · ${esc(p.modelo)}</option>`).join('');
   renderHistorico();
 }
 function renderHistorico(){
@@ -540,6 +556,124 @@ function renderHistorico(){
   const selA=$('#hAnio');
   if(selA) selA.onchange=e=>{ const val=e.target.value; state.histFiltro=(val==='TODOS')?'TODOS':+val; renderHistorico(); };
   dibujarChart(p.id, '#chartHist', activo);
+}
+
+/* ===================  VISTA: COMPARAR  =================== */
+function efectivoPorProv(pid){
+  const m={};
+  ultimosPorProveedorAll(pid).forEach(x=>{ const ef=x.promocion??x.precio; if(ef!=null) m[x.proveedor_id]={ef,fecha:x.fecha,precio:x.precio,promocion:x.promocion}; });
+  return m;
+}
+const mejorEfectivo = pid => { const v=Object.values(efectivoPorProv(pid)).map(o=>o.ef); return v.length?Math.min(...v):null; };
+
+function vComparar(v){
+  v.innerHTML=`
+    <div class="subnav" id="cmpTipoNav"></div>
+    <div class="toolbar">
+      <div class="field"><label>Modelo A</label><select id="cmpA"></select></div>
+      <div class="field"><label>Modelo B</label><select id="cmpB"></select></div>
+    </div>
+    <div id="cmpBody"></div>`;
+  $('#cmpTipoNav').innerHTML=Object.keys(TIPO_LABEL).map(t=>`<button data-t="${t}">${TIPO_LABEL[t]}</button>`).join('');
+  $('#cmpTipoNav').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    state.cmpTipo=b.dataset.t; state.cmpA=null; state.cmpB=null; poblarComparar();
+  });
+  $('#cmpA').onchange=e=>{ state.cmpA=e.target.value?+e.target.value:null; renderComparar(); };
+  $('#cmpB').onchange=e=>{ state.cmpB=e.target.value?+e.target.value:null; renderComparar(); };
+  poblarComparar();
+}
+function poblarComparar(){
+  $('#cmpTipoNav').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.t===state.cmpTipo));
+  const lista=state.productos.filter(p=>p.tipo===state.cmpTipo)
+    .sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo));
+  const opts=sel=>'<option value="">— elige —</option>'+lista.map(p=>`<option value="${p.id}" ${sel===p.id?'selected':''}>${esc(p.marca)} · ${esc(p.modelo)}</option>`).join('');
+  $('#cmpA').innerHTML=opts(state.cmpA);
+  $('#cmpB').innerHTML=opts(state.cmpB);
+  renderComparar();
+}
+function cmpCabezal(p,otro){
+  const mej=mejorEfectivo(p.id);
+  const mejOtro=otro?mejorEfectivo(otro.id):null;
+  const gana = mej!=null && mejOtro!=null && mej<mejOtro;
+  return `<div class="card" style="margin:0">
+    <div class="card-b" style="text-align:center">
+      ${p.imagen_url?`<img src="${esc(p.imagen_url)}" style="max-height:150px;max-width:100%;object-fit:contain;margin:0 auto 10px;display:block">`:''}
+      <div style="font-weight:700;color:var(--teal-900)">${esc(p.marca)} · ${esc(p.modelo)}</div>
+      <div style="margin:6px 0">${p.gama?`<span class="pill-gama">${esc(p.gama)}</span>`:''} <span class="chip ${p.estado==='Activo'?'act':'obs'}">${esc(p.estado)}</span></div>
+      <div style="font-size:22px;font-weight:800;color:${gana?'#1f8a5b':'var(--teal-900)'}">${money(mej)}${gana?' <span style="font-size:12px">▼ más barato</span>':''}</div>
+      <div class="muted" style="font-size:12px">mejor precio efectivo</div>
+    </div></div>`;
+}
+function renderComparar(){
+  const c=$('#cmpBody');
+  const A=state.productos.find(x=>x.id===state.cmpA);
+  const B=state.productos.find(x=>x.id===state.cmpB);
+  if(!A||!B){
+    c.innerHTML=`<div class="card"><div class="empty">Elige <b>dos modelos</b> de la categoría <b>${TIPO_LABEL[state.cmpTipo]}</b> para compararlos lado a lado: precios por proveedor y características.</div></div>`;
+    return;
+  }
+  if(A.id===B.id){
+    c.innerHTML=`<div class="card"><div class="empty">Elige dos modelos distintos.</div></div>`;
+    return;
+  }
+  // --- Precios por proveedor ---
+  const mA=efectivoPorProv(A.id), mB=efectivoPorProv(B.id);
+  const provIds=[...new Set([...Object.keys(mA),...Object.keys(mB)].map(Number))]
+    .sort((x,y)=>(state.provById[x]?.nombre||'').localeCompare(state.provById[y]?.nombre||''));
+  const filasPrec=provIds.map(id=>{
+    const a=mA[id]?.ef, b=mB[id]?.ef;
+    const aWin=a!=null&&b!=null&&a<b, bWin=a!=null&&b!=null&&b<a;
+    return `<tr>
+      <td><b>${esc(state.provById[id]?.nombre||'?')}</b></td>
+      <td class="${aWin?'best':''}">${a!=null?money(a):'<span class="muted">—</span>'}</td>
+      <td class="${bWin?'best':''}">${b!=null?money(b):'<span class="muted">—</span>'}</td></tr>`;
+  }).join('') || `<tr><td colspan="3" class="empty">Ninguno de los dos tiene precios cargados.</td></tr>`;
+
+  const mejA=mejorEfectivo(A.id), mejB=mejorEfectivo(B.id);
+  let resumen='';
+  if(mejA!=null&&mejB!=null){
+    const dif=Math.abs(mejA-mejB);
+    const masBarato=mejA<mejB?A:(mejB<mejA?B:null);
+    resumen = masBarato
+      ? `<b>${esc(masBarato.marca)} ${esc(masBarato.modelo)}</b> es ${money(dif)} más barato en su mejor precio efectivo.`
+      : `Ambos tienen el mismo mejor precio efectivo (${money(mejA)}).`;
+  }
+
+  // --- Características ---
+  const campos=CATALOGO[A.tipo];
+  const filasCar=campos.map(cmp=>{
+    const va=A.caracteristicas?.[cmp]||'—', vb=B.caracteristicas?.[cmp]||'—';
+    const dif = va!==vb && (va!=='—'||vb!=='—');
+    return `<tr${dif?' style="background:#fffbe9"':''}>
+      <td class="muted" style="white-space:nowrap">${esc(cmp)}</td>
+      <td${dif?' style="font-weight:600"':''}>${esc(va)}</td>
+      <td${dif?' style="font-weight:600"':''}>${esc(vb)}</td></tr>`;
+  }).join('');
+
+  c.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+      ${cmpCabezal(A,B)}
+      ${cmpCabezal(B,A)}
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-h">Precios por proveedor (último de cada uno)</div>
+      <div class="card-b">
+        ${resumen?`<p style="margin:0 0 12px;color:var(--teal-900)">${resumen}</p>`:''}
+        <div class="table-wrap"><table>
+          <thead><tr><th>Proveedor</th><th>${esc(A.marca)} ${esc(A.modelo)}</th><th>${esc(B.marca)} ${esc(B.modelo)}</th></tr></thead>
+          <tbody>${filasPrec}</tbody></table></div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Se muestra el precio efectivo (promoción si existe, si no el precio normal) más reciente por proveedor. En verde, el más barato de cada fila.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h">Características</div>
+      <div class="card-b">
+        <div class="table-wrap"><table>
+          <thead><tr><th>Característica</th><th>${esc(A.marca)} ${esc(A.modelo)}</th><th>${esc(B.marca)} ${esc(B.modelo)}</th></tr></thead>
+          <tbody>${filasCar}</tbody></table></div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Las filas resaltadas son las características en las que difieren.</p>
+      </div>
+    </div>`;
 }
 
 /* ===================  VISTA: PROMOCIONES  =================== */
@@ -754,24 +888,44 @@ async function borrarModelo(id){
 /* ---- Admin · Precios ---- */
 function aPrecios(){
   $('#adminBody').innerHTML=`
+   <div class="subnav" id="apTipoNav"></div>
    <div class="split">
     <div class="card"><div class="card-h">Modelos activos · <span id="apCnt" class="muted"></span></div>
-      <div style="padding:10px 12px 4px"><input id="apBuscar" placeholder="Buscar marca o modelo…"></div>
-      <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:60vh;border:0">
+      <div style="padding:10px 12px 4px">
+        <div class="row">
+          <div class="field"><label>Gama</label><select id="apGama"></select></div>
+          <div class="field"><label>Buscar</label><input id="apBuscar" placeholder="Marca o modelo…"></div>
+        </div>
+      </div>
+      <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:54vh;border:0">
         <table id="apTabla"></table></div></div></div>
     <div id="apDetalle"></div>
    </div>`;
-  $('#apBuscar').oninput=pintarListaPreciosModelos;
-  pintarListaPreciosModelos();
+  $('#apTipoNav').innerHTML=Object.keys(TIPO_LABEL).map(t=>`<button data-t="${t}">${TIPO_LABEL[t]}</button>`).join('');
+  $('#apTipoNav').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    state.precioTipo=b.dataset.t; state.precioGamaF=''; state.precioSel=null;
+    pintarListaPreciosModelos(true); renderPrecioDetalle();
+  });
+  $('#apGama').onchange=()=>{ state.precioGamaF=$('#apGama').value; pintarListaPreciosModelos(false); };
+  $('#apBuscar').oninput=()=>pintarListaPreciosModelos(false);
+  pintarListaPreciosModelos(true);
   renderPrecioDetalle();
 }
-function pintarListaPreciosModelos(){
+function pintarListaPreciosModelos(rebuildGama){
+  const nav=$('#apTipoNav');
+  if(nav) nav.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.t===state.precioTipo));
+  const base=state.productos.filter(p=>p.estado==='Activo' && p.tipo===state.precioTipo);
+  if(rebuildGama && $('#apGama')){
+    const gamas=[...new Set(base.map(p=>p.gama).filter(Boolean))].sort();
+    $('#apGama').innerHTML='<option value="">Todas las gamas</option>'+gamas.map(g=>`<option ${state.precioGamaF===g?'selected':''}>${esc(g)}</option>`).join('');
+  }
   const q=($('#apBuscar')?.value||'').toLowerCase();
-  let list=state.productos.filter(p=>p.estado==='Activo');
+  let list=base;
+  if(state.precioGamaF) list=list.filter(p=>p.gama===state.precioGamaF);
   if(q) list=list.filter(p=>(p.marca+' '+p.modelo).toLowerCase().includes(q));
   list.sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo));
   $('#apCnt').textContent=list.length;
-  $('#apTabla').innerHTML=`<thead><tr><th>Modelo</th><th>Tipo</th><th>Última carga</th></tr></thead><tbody>`+
+  $('#apTabla').innerHTML=`<thead><tr><th>Modelo</th><th>Gama</th><th>Última carga</th></tr></thead><tbody>`+
     (list.map(p=>{
       const rows=preciosDe(p.id);
       const ult=rows.length?rows.reduce((a,b)=>new Date(b.fecha)>new Date(a.fecha)?b:a):null;
@@ -779,11 +933,11 @@ function pintarListaPreciosModelos(){
       const info=ult?fecha(ult.fecha):'<span style="color:#c0413b">— sin precios</span>';
       return `<tr class="clickable ${state.precioSel===p.id?'sel':''}" data-id="${p.id}">
         <td><b>${esc(p.marca)}</b> ${esc(p.modelo)}<div class="muted" style="font-size:11px">${n} precio${n===1?'':'s'} cargado${n===1?'':'s'}</div></td>
-        <td>${TIPO_SING[p.tipo]}</td><td class="muted">${info}</td></tr>`;
-    }).join('') || `<tr><td colspan="3" class="empty">Sin modelos activos.</td></tr>`)+`</tbody>`;
+        <td>${p.gama?`<span class="pill-gama">${esc(p.gama)}</span>`:'—'}</td><td class="muted">${info}</td></tr>`;
+    }).join('') || `<tr><td colspan="3" class="empty">Sin modelos activos en esta categoría.</td></tr>`)+`</tbody>`;
   $('#apTabla').querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>{
     state.precioSel=+tr.dataset.id; state.precioVerTodos=false;
-    pintarListaPreciosModelos(); renderPrecioDetalle();
+    pintarListaPreciosModelos(false); renderPrecioDetalle();
   });
 }
 function renderPrecioDetalle(){
