@@ -210,7 +210,9 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 const state = {
   perfil:null, productos:[], proveedores:[], precios:[], promociones:[],
   provById:{}, tipoActual:'celular', seleccion:null, chart:null, editId:null,
-  anioFiltro:null, anioActivo:'TODOS'
+  anioFiltro:null, anioActivo:'TODOS',
+  precioSel:null, precioVerTodos:false,
+  histSel:null, histFiltro:null, histActivo:'TODOS'
 };
 const esAdmin  = () => state.perfil && (state.perfil.rol==='admin' || state.perfil.rol==='super');
 const esSuper  = () => state.perfil && state.perfil.rol==='super';
@@ -291,6 +293,20 @@ function ultimosPorProveedor(pid){
   });
   return Object.values(map);
 }
+function ultimosPorProveedorAll(pid){
+  const map={};
+  preciosDe(pid).forEach(p=>{
+    const key=(p.semana??0)*1e9 + (p.fecha?new Date(p.fecha).getTime()/1e5:0);
+    if(!map[p.proveedor_id] || key>map[p.proveedor_id]._k) map[p.proveedor_id]={...p,_k:key};
+  });
+  return Object.values(map);
+}
+// Registro más reciente (por fecha, luego por id) entre TODOS los precios del modelo
+function ultimoRegistro(pid){
+  const rows=preciosDe(pid);
+  if(!rows.length) return null;
+  return rows.slice().sort((a,b)=> (new Date(b.fecha)-new Date(a.fecha)) || ((b.id||0)-(a.id||0)) )[0];
+}
 function mejorPrecio(pid){
   const v=ultimosPorProveedor(pid).map(p=>p.promocion??p.precio).filter(x=>x!=null);
   return v.length?Math.min(...v):null;
@@ -302,7 +318,7 @@ function mejorPrecioGlobal(pid){
 
 /* ===================  NAVEGACIÓN  =================== */
 function construirNav(){
-  const items=[['analisis','Análisis'],['promociones','Promociones'],['exportar','Exportar']];
+  const items=[['analisis','Análisis'],['historico','Histórico de precios'],['promociones','Promocionales'],['exportar','Exportar']];
   if(esAdmin()) items.push(['admin','Administración']);
   if(esSuper()) items.push(['usuarios','Usuarios']);
   $('#mainNav').innerHTML=items.map(([k,l])=>`<button data-nav="${k}">${l}</button>`).join('');
@@ -311,7 +327,7 @@ function construirNav(){
 function irA(seccion){
   $('#mainNav').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.nav===seccion));
   const v=$('#view'); state.chart&&state.chart.destroy(); state.chart=null;
-  ({analisis:vAnalisis,promociones:vPromos,exportar:vExportar,admin:vAdmin,usuarios:vUsuarios}[seccion])(v);
+  ({analisis:vAnalisis,historico:vHistorico,promociones:vPromos,exportar:vExportar,admin:vAdmin,usuarios:vUsuarios}[seccion])(v);
 }
 
 /* ===================  VISTA: ANÁLISIS  =================== */
@@ -353,15 +369,18 @@ function pintarFilaModelos(){
   if(fg) lista=lista.filter(p=>p.gama===fg);
   if(fe) lista=lista.filter(p=>p.estado===fe);
   $('#cntModelos').textContent=lista.length+' resultado'+(lista.length===1?'':'s');
-  const head=`<thead><tr><th>Marca</th><th>Modelo</th><th>Gama</th><th>Estado</th><th>Mejor precio</th></tr></thead>`;
+  const head=`<thead><tr><th>Marca</th><th>Modelo</th><th>Gama</th><th>Estado</th><th>Último precio</th><th>Promoción</th></tr></thead>`;
   const body=lista.map(p=>{
-    const mp=mejorPrecio(p.id);
+    const u=ultimoRegistro(p.id);
+    const precioTxt = u && u.precio!=null ? money(u.precio) : '—';
+    const promoTxt  = u ? money(u.promocion!=null ? u.promocion : 0) : '—';
     return `<tr class="clickable ${state.seleccion===p.id?'sel':''}" data-id="${p.id}">
       <td>${esc(p.marca)}</td><td><b>${esc(p.modelo)}</b></td>
       <td>${p.gama?`<span class="pill-gama">${esc(p.gama)}</span>`:'—'}</td>
       <td><span class="chip ${p.estado==='Activo'?'act':'obs'}">${esc(p.estado)}</span></td>
-      <td>${mp!=null?`<span class="best">${money(mp)}</span>`:'—'}</td></tr>`;
-  }).join('') || `<tr><td colspan="5" class="empty">Sin modelos. Agrégalos en Administración.</td></tr>`;
+      <td>${u&&u.precio!=null?`<span class="best">${precioTxt}</span>`:'—'}</td>
+      <td>${promoTxt}</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">Sin modelos. Agrégalos en Administración.</td></tr>`;
   $('#tblModelos').innerHTML=head+'<tbody>'+body+'</tbody>';
   $('#tblModelos').querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>{state.seleccion=+tr.dataset.id;state.anioFiltro=null;pintarFilaModelos();renderDetalle();});
 }
@@ -372,26 +391,17 @@ function renderDetalle(){
   const campos=CATALOGO[p.tipo];
   const kv=campos.map(c=>`<div class="k">${esc(c)}</div><div class="v">${esc(p.caracteristicas?.[c]||'—')}</div>`).join('');
   const anios=aniosDe(p.id);
-  state.anioActivo = (state.anioFiltro==null) ? (anios[0] ?? 'TODOS') : state.anioFiltro;
-  const ult=ultimosPorProveedor(p.id);
-  const mp=mejorPrecio(p.id);
+  state.anioActivo = anios[0] ?? 'TODOS';   // el gráfico muestra el año más reciente
+  const ult=ultimosPorProveedorAll(p.id);
+  const mp=(()=>{ const v=ult.map(x=>x.promocion??x.precio).filter(x=>x!=null); return v.length?Math.min(...v):null; })();
   const filas=ult.sort((a,b)=>(a.promocion??a.precio??1e15)-(b.promocion??b.precio??1e15)).map(x=>{
     const efectivo=x.promocion??x.precio;
     return `<tr><td><b>${esc(state.provById[x.proveedor_id]?.nombre||'?')}</b></td>
       <td>${money(x.precio)}</td>
       <td>${x.promocion!=null?money(x.promocion):'—'}</td>
       <td class="${efectivo===mp?'best':''}">${money(efectivo)}</td>
-      <td class="muted">${x.semana!=null?('S'+x.semana+' · '+(anioDe(x)??'')):fecha(x.fecha)}</td></tr>`;
-  }).join('') || `<tr><td colspan="5" class="empty">Sin precios para el año seleccionado.</td></tr>`;
-
-  const selAnio = anios.length ? `
-        <div style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
-          <label style="font-size:13px;color:var(--muted)">Año</label>
-          <select id="filtroAnio" style="width:auto;min-width:120px">
-            ${anios.map(y=>`<option value="${y}" ${String(state.anioActivo)===String(y)?'selected':''}>${y}</option>`).join('')}
-            <option value="TODOS" ${state.anioActivo==='TODOS'?'selected':''}>Todos los años</option>
-          </select>
-        </div>` : '';
+      <td class="muted">${fecha(x.fecha)}</td></tr>`;
+  }).join('') || `<tr><td colspan="5" class="empty">Sin precios cargados para este modelo.</td></tr>`;
 
   d.innerHTML=`
     <div class="card">
@@ -403,25 +413,24 @@ function renderDetalle(){
           <div class="stat"><span class="lbl">Proveedores</span><span class="val">${ult.length}</span></div>
           <div class="stat"><span class="lbl">Gama</span><span class="val" style="font-size:14px">${esc(p.gama||'—')}</span></div>
         </div>
-        <h3 style="font-size:14px;color:var(--teal-900);margin:6px 0 8px">Precios por proveedor</h3>
-        ${selAnio}
+        <h3 style="font-size:14px;color:var(--teal-900);margin:6px 0 8px">Últimos precios por proveedor</h3>
         <div class="table-wrap"><table>
-          <thead><tr><th>Proveedor</th><th>Precio</th><th>Promoción</th><th>Efectivo</th><th>Periodo</th></tr></thead>
+          <thead><tr><th>Proveedor</th><th>Precio</th><th>Promoción</th><th>Efectivo</th><th>Fecha</th></tr></thead>
           <tbody>${filas}</tbody></table></div>
         <h3 style="font-size:14px;color:var(--teal-900);margin:18px 0 8px">Evolución por semana${state.anioActivo==='TODOS'?'':' · '+state.anioActivo}</h3>
         <div style="position:relative;height:230px"><canvas id="chartPrecio"></canvas></div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">¿Necesitas el historial completo y comparaciones? Ve a la pestaña <b>Histórico de precios</b>.</p>
         <details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted);font-size:13px">Ver todas las características</summary>
           <div class="kv" style="margin-top:10px">${kv}</div></details>
       </div>
     </div>`;
-  const selA=$('#filtroAnio');
-  if(selA) selA.onchange=e=>{ const v=e.target.value; state.anioFiltro = (v==='TODOS')?'TODOS':+v; renderDetalle(); };
   dibujarChart(p.id);
 }
-function dibujarChart(pid){
-  const rows=preciosFiltrados(pid);
+function dibujarChart(pid, sel='#chartPrecio', scope){
+  const a = scope===undefined ? state.anioActivo : scope;
+  const rows=preciosDe(pid).filter(p=> a==null || a==='TODOS' || anioDe(p)===a);
   if(!rows.length) return;
-  const multi = state.anioActivo==='TODOS';
+  const multi = a==='TODOS';
   const keyOf = r => (r.semana!=null) ? (anioDe(r)+'-S'+String(r.semana).padStart(2,'0')) : ('F'+r.fecha);
   const labelOf = r => (r.semana!=null) ? (multi ? ('S'+r.semana+'·'+anioDe(r)) : ('Semana '+r.semana)) : fecha(r.fecha);
   const seen=new Map();
@@ -437,7 +446,7 @@ function dibujarChart(pid){
     return {label:state.provById[id]?.nombre||'?',data,borderColor:palette[i%palette.length],
       backgroundColor:palette[i%palette.length],tension:.25,spanGaps:true,pointRadius:3};
   });
-  state.chart=new Chart($('#chartPrecio'),{
+  state.chart=new Chart($(sel),{
     type:'line',
     data:{labels:xs.map(x=>x.label),datasets},
     options:{maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
@@ -445,6 +454,92 @@ function dibujarChart(pid){
         tooltip:{callbacks:{label:c=>c.dataset.label+': '+money(c.parsed.y)}}},
       scales:{y:{ticks:{callback:v=>'₡'+(v/1000)+'k'}}}}
   });
+}
+
+/* ===================  VISTA: HISTÓRICO DE PRECIOS  =================== */
+function vHistorico(v){
+  const opts=state.productos.slice()
+    .sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo))
+    .map(p=>`<option value="${p.id}" ${state.histSel===p.id?'selected':''}>${esc(p.marca)} · ${esc(p.modelo)} (${TIPO_SING[p.tipo]})</option>`).join('');
+  v.innerHTML=`
+    <div class="card" style="margin-bottom:16px"><div class="card-b" style="padding:14px 16px">
+      <div class="field" style="max-width:520px;margin:0">
+        <label>Modelo</label>
+        <select id="hModelo"><option value="">— elige un modelo —</option>${opts}</select>
+      </div>
+    </div></div>
+    <div id="hDetalle"></div>`;
+  $('#hModelo').onchange=e=>{ state.histSel=e.target.value?+e.target.value:null; state.histFiltro=null; renderHistorico(); };
+  renderHistorico();
+}
+function renderHistorico(){
+  const d=$('#hDetalle'); state.chart&&state.chart.destroy(); state.chart=null;
+  const p=state.productos.find(x=>x.id===state.histSel);
+  if(!p){ d.innerHTML=`<div class="card"><div class="empty">Selecciona un modelo para ver su histórico de precios y la comparación entre proveedores.</div></div>`; return; }
+  const anios=aniosDe(p.id);
+  const activo=(state.histFiltro==null)?(anios[0]??'TODOS'):state.histFiltro;
+  state.histActivo=activo;
+  const rows=preciosDe(p.id).filter(r=> activo==='TODOS' || anioDe(r)===activo)
+    .sort((a,b)=>(new Date(b.fecha)-new Date(a.fecha))||((b.id||0)-(a.id||0)));
+
+  // Comparación: último precio efectivo por proveedor (sobre todo el histórico)
+  const ult=ultimosPorProveedorAll(p.id);
+  const mejor=(()=>{ const v=ult.map(x=>x.promocion??x.precio).filter(x=>x!=null); return v.length?Math.min(...v):null; })();
+  const comp=ult.sort((a,b)=>(a.promocion??a.precio??1e15)-(b.promocion??b.precio??1e15)).map(x=>{
+    const ef=x.promocion??x.precio;
+    return `<tr><td><b>${esc(state.provById[x.proveedor_id]?.nombre||'?')}</b></td>
+      <td>${money(x.precio)}</td><td>${x.promocion!=null?money(x.promocion):'—'}</td>
+      <td class="${ef===mejor?'best':''}">${money(ef)}</td>
+      <td class="muted">${fecha(x.fecha)}</td></tr>`;
+  }).join('') || `<tr><td colspan="5" class="empty">Sin precios.</td></tr>`;
+
+  // Histórico completo (según año)
+  const hist=rows.map(r=>{
+    const ef=r.promocion??r.precio;
+    return `<tr><td class="muted">${fecha(r.fecha)}</td>
+      <td>S${r.semana??'—'} · ${anioDe(r)??''}</td>
+      <td>${esc(state.provById[r.proveedor_id]?.nombre||'?')}</td>
+      <td>${money(r.precio)}</td><td>${r.promocion!=null?money(r.promocion):'—'}</td>
+      <td>${money(ef)}</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">Sin precios para el año seleccionado.</td></tr>`;
+
+  const selAnio = anios.length ? `
+      <div style="display:flex;align-items:center;gap:8px;margin:4px 0 12px">
+        <label style="font-size:13px;color:var(--muted)">Año</label>
+        <select id="hAnio" style="width:auto;min-width:130px">
+          ${anios.map(y=>`<option value="${y}" ${String(activo)===String(y)?'selected':''}>${y}</option>`).join('')}
+          <option value="TODOS" ${activo==='TODOS'?'selected':''}>Todos los años</option>
+        </select>
+      </div>` : '';
+
+  d.innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-h">${esc(p.marca)} · ${esc(p.modelo)} — Comparación actual</div>
+      <div class="card-b">
+        <div class="stats" style="margin-bottom:12px">
+          <div class="stat"><span class="lbl">Mejor precio</span><span class="val">${money(mejor)}</span></div>
+          <div class="stat"><span class="lbl">Proveedores</span><span class="val">${ult.length}</span></div>
+          <div class="stat"><span class="lbl">Registros</span><span class="val">${preciosDe(p.id).length}</span></div>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Proveedor</th><th>Precio</th><th>Promoción</th><th>Efectivo</th><th>Última fecha</th></tr></thead>
+          <tbody>${comp}</tbody></table></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h">Histórico de precios</div>
+      <div class="card-b">
+        ${selAnio}
+        <div style="position:relative;height:260px;margin-bottom:18px"><canvas id="chartHist"></canvas></div>
+        <h3 style="font-size:14px;color:var(--teal-900);margin:6px 0 8px">Detalle${activo==='TODOS'?'':' · '+activo} · <span class="muted">${rows.length} registro${rows.length===1?'':'s'}</span></h3>
+        <div class="table-wrap" style="max-height:50vh"><table>
+          <thead><tr><th>Fecha</th><th>Periodo</th><th>Proveedor</th><th>Precio</th><th>Promoción</th><th>Efectivo</th></tr></thead>
+          <tbody>${hist}</tbody></table></div>
+      </div>
+    </div>`;
+  const selA=$('#hAnio');
+  if(selA) selA.onchange=e=>{ const val=e.target.value; state.histFiltro=(val==='TODOS')?'TODOS':+val; renderHistorico(); };
+  dibujarChart(p.id, '#chartHist', activo);
 }
 
 /* ===================  VISTA: PROMOCIONES  =================== */
@@ -467,14 +562,14 @@ function pintarPromos(tipo){
     <div class="promo">
       ${esAdmin()?`<button class="btn danger sm del" data-del="${p.id}">Eliminar</button>`:''}
       <img src="${esc(p.imagen_url)}" alt="${esc(p.titulo||'')}">
-      <div class="meta"><div class="t">${esc(p.titulo||'Promoción')}</div>
+      <div class="meta"><div class="t">${esc(p.titulo||'Promocional')}</div>
         <div class="p">${p.proveedor_id?esc(state.provById[p.proveedor_id]?.nombre||''):''}${p.tipo?' · '+TIPO_LABEL[p.tipo]:''}</div></div>
     </div>`).join('')+`</div>`
-    : `<div class="card"><div class="empty">No hay promociones cargadas.</div></div>`;
+    : `<div class="card"><div class="empty">No hay promocionales cargados.</div></div>`;
   $('#promoGrid').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
-    if(!confirm('¿Eliminar esta promoción?'))return;
+    if(!confirm('¿Eliminar este promocional?'))return;
     await sb.from('promociones').delete().eq('id',b.dataset.del);
-    state.promociones=state.promociones.filter(x=>x.id!=b.dataset.del); pintarPromos(tipo); toast('Promoción eliminada');
+    state.promociones=state.promociones.filter(x=>x.id!=b.dataset.del); pintarPromos(tipo); toast('Promocional eliminado');
   });
 }
 
@@ -487,7 +582,7 @@ function vExportar(v){
       <option value="smartwatch">Catálogo · SmartWatch</option>
       <option value="audifono">Catálogo · Audífonos</option>
       <option value="precios">Precios por proveedor (formato largo)</option>
-      <option value="promociones">Promociones</option>
+      <option value="promociones">Promocionales</option>
     </select></div>
     <div class="row" style="margin-top:6px">
       <button class="btn" id="exCsv">Descargar CSV (;)</button>
@@ -509,7 +604,7 @@ function datasetExport(key){
   if(key==='promociones'){
     const rows=state.promociones.map(p=>({Titulo:p.titulo||'',Tipo:TIPO_LABEL[p.tipo]||'',
       Proveedor:state.provById[p.proveedor_id]?.nombre||'',Imagen:p.imagen_url||''}));
-    return {nombre:'Promociones',rows};
+    return {nombre:'Promocionales',rows};
   }
   const campos=CATALOGO[key];
   const rows=state.productos.filter(p=>p.tipo===key).map(p=>{
@@ -550,7 +645,7 @@ function vAdmin(v){
       <button data-a="modelos" class="active">Modelos</button>
       <button data-a="precios">Precios</button>
       <button data-a="proveedores">Proveedores</button>
-      <button data-a="promos">Promociones</button>
+      <button data-a="promos">Promocionales</button>
     </div><div id="adminBody"></div>`;
   const nav=$('#adminNav');
   nav.querySelectorAll('button').forEach(b=>b.onclick=()=>{
@@ -658,60 +753,99 @@ async function borrarModelo(id){
 
 /* ---- Admin · Precios ---- */
 function aPrecios(){
-  const opts=state.productos.slice().sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo))
-    .map(p=>`<option value="${p.id}">${esc(p.marca)} · ${esc(p.modelo)} (${TIPO_SING[p.tipo]})</option>`).join('');
-  const provOpts=state.proveedores.filter(p=>p.activo!==false).map(p=>`<option value="${p.id}">${esc(p.nombre)}</option>`).join('');
   $('#adminBody').innerHTML=`
    <div class="split">
-    <div class="card"><div class="card-h">Cargar precio</div><div class="card-b">
-      <div class="field"><label>Producto (ya creado)</label><select id="pProd">${opts||'<option value="">— sin productos —</option>'}</select></div>
-      <div class="row">
-        <div class="field"><label>Proveedor</label><select id="pProv">${provOpts}</select></div>
-        <div class="field"><label>Fecha</label><input id="pFecha" type="date"></div>
-      </div>
-      <p class="muted" style="font-size:12px;margin:-4px 0 6px">El <b>año</b> y la <b>semana</b> se calculan automáticamente a partir de la fecha.</p>
-      <div class="row">
-        <div class="field"><label>Precio (₡)</label><input id="pPrecio" type="number" min="0" placeholder="649900"></div>
-        <div class="field"><label>Promoción (₡, opcional)</label><input id="pPromo" type="number" min="0" placeholder="529900"></div>
-      </div>
-      <button class="btn" id="pGuardar">Agregar precio</button>
-    </div></div>
-    <div class="card"><div class="card-h">Últimos precios cargados</div>
-      <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:65vh;border:0"><table id="pTabla"></table></div></div></div>
+    <div class="card"><div class="card-h">Modelos activos · <span id="apCnt" class="muted"></span></div>
+      <div style="padding:10px 12px 4px"><input id="apBuscar" placeholder="Buscar marca o modelo…"></div>
+      <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:60vh;border:0">
+        <table id="apTabla"></table></div></div></div>
+    <div id="apDetalle"></div>
    </div>`;
-  $('#pFecha').value=new Date().toISOString().slice(0,10);
-  $('#pGuardar').onclick=guardarPrecio;
-  pintarTablaPrecios();
+  $('#apBuscar').oninput=pintarListaPreciosModelos;
+  pintarListaPreciosModelos();
+  renderPrecioDetalle();
 }
-function pintarTablaPrecios(){
-  const list=state.precios.slice().sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,150);
-  $('#pTabla').innerHTML=`<thead><tr><th>Producto</th><th>Proveedor</th><th>Año</th><th>Sem</th><th>Precio</th><th>Promo</th><th></th></tr></thead><tbody>`+
-    (list.map(p=>{const prod=state.productos.find(x=>x.id===p.producto_id)||{};
-      return `<tr><td>${esc(prod.marca||'')} ${esc(prod.modelo||'')}</td>
-        <td>${esc(state.provById[p.proveedor_id]?.nombre||'')}</td><td>${anioDe(p)??'—'}</td><td>${p.semana??'—'}</td>
-        <td>${money(p.precio)}</td><td>${p.promocion!=null?money(p.promocion):'—'}</td>
-        <td style="text-align:right"><button class="btn danger sm" data-del="${p.id}">×</button></td></tr>`;}).join('')
-      || `<tr><td colspan="7" class="empty">Sin precios.</td></tr>`)+`</tbody>`;
-  $('#pTabla').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
-    if(!confirm('¿Eliminar este precio?'))return;
-    await sb.from('precios').delete().eq('id',b.dataset.del);
-    state.precios=state.precios.filter(x=>x.id!=b.dataset.del); pintarTablaPrecios(); toast('Precio eliminado');
+function pintarListaPreciosModelos(){
+  const q=($('#apBuscar')?.value||'').toLowerCase();
+  let list=state.productos.filter(p=>p.estado==='Activo');
+  if(q) list=list.filter(p=>(p.marca+' '+p.modelo).toLowerCase().includes(q));
+  list.sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo));
+  $('#apCnt').textContent=list.length;
+  $('#apTabla').innerHTML=`<thead><tr><th>Modelo</th><th>Tipo</th><th>Última carga</th></tr></thead><tbody>`+
+    (list.map(p=>{
+      const rows=preciosDe(p.id);
+      const ult=rows.length?rows.reduce((a,b)=>new Date(b.fecha)>new Date(a.fecha)?b:a):null;
+      const n=rows.length;
+      const info=ult?fecha(ult.fecha):'<span style="color:#c0413b">— sin precios</span>';
+      return `<tr class="clickable ${state.precioSel===p.id?'sel':''}" data-id="${p.id}">
+        <td><b>${esc(p.marca)}</b> ${esc(p.modelo)}<div class="muted" style="font-size:11px">${n} precio${n===1?'':'s'} cargado${n===1?'':'s'}</div></td>
+        <td>${TIPO_SING[p.tipo]}</td><td class="muted">${info}</td></tr>`;
+    }).join('') || `<tr><td colspan="3" class="empty">Sin modelos activos.</td></tr>`)+`</tbody>`;
+  $('#apTabla').querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>{
+    state.precioSel=+tr.dataset.id; state.precioVerTodos=false;
+    pintarListaPreciosModelos(); renderPrecioDetalle();
   });
 }
-async function guardarPrecio(){
-  const pid=+$('#pProd').value; if(!pid){toast('Selecciona un producto',true);return;}
-  const precio=$('#pPrecio').value, fecha=$('#pFecha').value;
+function renderPrecioDetalle(){
+  const d=$('#apDetalle');
+  const p=state.productos.find(x=>x.id===state.precioSel);
+  if(!p){ d.innerHTML=`<div class="card"><div class="empty">Selecciona un modelo de la izquierda para ver y cargar sus precios.</div></div>`; return; }
+  const provOpts=state.proveedores.filter(x=>x.activo!==false).map(x=>`<option value="${x.id}">${esc(x.nombre)}</option>`).join('');
+  const rows=preciosDe(p.id).slice().sort((a,b)=>(new Date(b.fecha)-new Date(a.fecha))||((b.id||0)-(a.id||0)));
+  const shown=state.precioVerTodos?rows:rows.slice(0,10);
+  const filas=shown.map(r=>`<tr>
+      <td class="muted">${fecha(r.fecha)}</td>
+      <td>${esc(state.provById[r.proveedor_id]?.nombre||'?')}</td>
+      <td>${money(r.precio)}</td>
+      <td>${r.promocion!=null?money(r.promocion):'—'}</td>
+      <td class="muted">S${r.semana??'—'} · ${anioDe(r)??''}</td>
+      <td style="text-align:right"><button class="btn danger sm" data-delp="${r.id}">×</button></td></tr>`).join('')
+    || `<tr><td colspan="6" class="empty">Sin precios para este modelo todavía.</td></tr>`;
+  d.innerHTML=`
+    <div class="card">
+      <div class="card-h">${esc(p.marca)} · ${esc(p.modelo)} <span class="muted" style="font-weight:400">· ${TIPO_SING[p.tipo]}</span></div>
+      <div class="card-b">
+        <h3 style="font-size:13px;color:var(--teal-900);margin:0 0 8px">Agregar precio</h3>
+        <div class="row">
+          <div class="field"><label>Proveedor</label><select id="apProv">${provOpts}</select></div>
+          <div class="field"><label>Fecha</label><input id="apFecha" type="date"></div>
+        </div>
+        <p class="muted" style="font-size:12px;margin:-4px 0 6px">El <b>año</b> y la <b>semana</b> se calculan automáticamente a partir de la fecha.</p>
+        <div class="row">
+          <div class="field"><label>Precio (₡)</label><input id="apPrecio" type="number" min="0" placeholder="649900"></div>
+          <div class="field"><label>Promoción (₡, opcional)</label><input id="apPromo" type="number" min="0" placeholder="529900"></div>
+        </div>
+        <button class="btn" id="apGuardar">Agregar precio</button>
+        <h3 style="font-size:13px;color:var(--teal-900);margin:18px 0 8px">Precios cargados · <span class="muted">${rows.length}</span></h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Fecha</th><th>Proveedor</th><th>Precio</th><th>Promoción</th><th>Periodo</th><th></th></tr></thead>
+          <tbody>${filas}</tbody></table></div>
+        ${rows.length>10?`<button class="btn ghost sm" id="apVerTodos" style="margin-top:8px">${state.precioVerTodos?'Ver solo los últimos 10':'Ver todos ('+rows.length+')'}</button>`:''}
+      </div>
+    </div>`;
+  $('#apFecha').value=new Date().toISOString().slice(0,10);
+  $('#apGuardar').onclick=()=>guardarPrecioAdmin(p.id);
+  const vt=$('#apVerTodos'); if(vt) vt.onclick=()=>{state.precioVerTodos=!state.precioVerTodos;renderPrecioDetalle();};
+  d.querySelectorAll('[data-delp]').forEach(b=>b.onclick=async()=>{
+    if(!confirm('¿Eliminar este precio?'))return;
+    await sb.from('precios').delete().eq('id',b.dataset.delp);
+    state.precios=state.precios.filter(x=>x.id!=b.dataset.delp);
+    pintarListaPreciosModelos(); renderPrecioDetalle(); toast('Precio eliminado');
+  });
+}
+async function guardarPrecioAdmin(pid){
+  const precio=$('#apPrecio').value, fecha=$('#apFecha').value;
   if(!precio){toast('Ingresa el precio',true);return;}
   if(!fecha){toast('Ingresa la fecha',true);return;}
-  const btn=$('#pGuardar'); btn.disabled=true; btn.innerHTML='<span class="loader"></span> Guardando…';
-  const payload={producto_id:pid,proveedor_id:+$('#pProv').value,fecha,
-    precio:+precio,promocion:$('#pPromo').value?+$('#pPromo').value:null};
+  const btn=$('#apGuardar'); btn.disabled=true; btn.innerHTML='<span class="loader"></span> Guardando…';
+  const payload={producto_id:pid,proveedor_id:+$('#apProv').value,fecha,
+    precio:+precio,promocion:$('#apPromo').value?+$('#apPromo').value:null};
   const {data,error}=await sb.from('precios').insert(payload).select().single();
   btn.disabled=false; btn.textContent='Agregar precio';
   if(error){toast('Error: '+error.message,true);return;}
   state.precios.push(data);
-  ['pPrecio','pPromo'].forEach(id=>$('#'+id).value='');
-  toast('Precio agregado'); pintarTablaPrecios();
+  ['apPrecio','apPromo'].forEach(id=>$('#'+id).value='');
+  pintarListaPreciosModelos(); renderPrecioDetalle(); toast('Precio agregado');
 }
 
 /* ---- Admin · Proveedores ---- */
@@ -751,7 +885,7 @@ function pintarTablaProv(){
 function aPromos(){
   const provOpts='<option value="">— sin proveedor —</option>'+state.proveedores.map(p=>`<option value="${p.id}">${esc(p.nombre)}</option>`).join('');
   $('#adminBody').innerHTML=`
-   <div class="card" style="max-width:520px;margin-bottom:18px"><div class="card-h">Agregar promoción</div><div class="card-b">
+   <div class="card" style="max-width:520px;margin-bottom:18px"><div class="card-h">Agregar promocional</div><div class="card-b">
       <div class="field"><label>Título</label><input id="poTitulo" placeholder="REDMI Note 15 Pro"></div>
       <div class="row">
         <div class="field"><label>Categoría</label><select id="poTipo">
@@ -759,7 +893,7 @@ function aPromos(){
         <div class="field"><label>Proveedor</label><select id="poProv">${provOpts}</select></div>
       </div>
       <div class="field"><label>Imagen</label><input id="poImg" type="file" accept="image/*"></div>
-      <button class="btn" id="poGuardar">Publicar promoción</button>
+      <button class="btn" id="poGuardar">Publicar promocional</button>
    </div></div>
    <div id="poGrid"></div>`;
   $('#poGuardar').onclick=async()=>{
@@ -772,18 +906,18 @@ function aPromos(){
       const {data,error}=await sb.from('promociones').insert(payload).select().single();
       if(error)throw error;
       state.promociones.unshift(data); $('#poTitulo').value=''; $('#poImg').value='';
-      toast('Promoción publicada'); pintarGridAdminPromos();
+      toast('Promocional publicada'); pintarGridAdminPromos();
     }catch(e){toast('Error: '+(e.message||e),true);}
-    finally{btn.disabled=false;btn.textContent='Publicar promoción';}
+    finally{btn.disabled=false;btn.textContent='Publicar promocional';}
   };
   pintarGridAdminPromos();
 }
 function pintarGridAdminPromos(){
   $('#poGrid').innerHTML=state.promociones.length?`<div class="gallery">`+state.promociones.map(p=>`
     <div class="promo"><button class="btn danger sm del" data-del="${p.id}">Eliminar</button>
-      <img src="${esc(p.imagen_url)}"><div class="meta"><div class="t">${esc(p.titulo||'Promoción')}</div>
+      <img src="${esc(p.imagen_url)}"><div class="meta"><div class="t">${esc(p.titulo||'Promocional')}</div>
       <div class="p">${p.proveedor_id?esc(state.provById[p.proveedor_id]?.nombre||''):''}${p.tipo?' · '+TIPO_LABEL[p.tipo]:''}</div></div></div>`).join('')+`</div>`
-    :`<div class="card"><div class="empty">Aún no hay promociones.</div></div>`;
+    :`<div class="card"><div class="empty">Aún no hay promocionales.</div></div>`;
   $('#poGrid').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
     if(!confirm('¿Eliminar?'))return;
     await sb.from('promociones').delete().eq('id',b.dataset.del);
