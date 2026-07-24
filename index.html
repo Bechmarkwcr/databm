@@ -142,6 +142,20 @@ tr.clickable{cursor:pointer}
 .empty{padding:40px;text-align:center;color:var(--muted)}
 .loader{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-3px}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* ===========  COMBO CON BÚSQUEDA  =========== */
+.combo{position:relative}
+.combo-pop{position:absolute;top:100%;left:0;right:0;z-index:40;background:#fff;border:1px solid var(--line);
+  border-radius:10px;box-shadow:var(--shadow);max-height:270px;overflow:auto;margin-top:4px}
+.combo-pop div{padding:9px 12px;font-size:14px;cursor:pointer;border-bottom:1px solid var(--line)}
+.combo-pop div:last-child{border-bottom:0}
+.combo-pop div:hover,.combo-pop div.on{background:var(--teal-100)}
+.combo-pop .none{color:var(--muted);cursor:default}
+.combo-pop .none:hover{background:#fff}
+.combo-x{position:absolute;right:6px;bottom:6px;width:26px;height:26px;border:0;background:none;
+  color:var(--muted);font-size:20px;line-height:1;border-radius:7px}
+.combo-x:hover{background:var(--teal-100);color:var(--teal-700)}
+.combo input{padding-right:34px!important}
+
 /* ===========  NOVEDADES  =========== */
 .nov-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow:auto}
 .nov-item{display:flex;align-items:center;gap:11px;padding:9px 11px;border:1px solid var(--line);
@@ -225,7 +239,7 @@ const state = {
   provById:{}, tipoActual:'celular', seleccion:null, chart:null, editId:null,
   anioFiltro:null, anioActivo:'TODOS',
   precioSel:null, precioVerTodos:false, precioTipo:'celular', precioGamaF:'',
-  histSel:null, histFiltro:null, histActivo:'TODOS', histTipo:'celular', histGamaF:'',
+  histSel:null, histFiltro:null, histActivo:'TODOS', histTipo:'celular', histGamaF:'', histMarcaF:'',
   cmpTipo:'celular', cmpA:null, cmpB:null, cmpC:null
 };
 const esAdmin  = () => state.perfil && (state.perfil.rol==='admin' || state.perfil.rol==='super');
@@ -561,30 +575,106 @@ function vHistorico(v){
   v.innerHTML=`
     <div class="subnav" id="hTipoNav"></div>
     <div class="toolbar">
+      <div class="field"><label>Marca</label><select id="hMarca"></select></div>
       <div class="field"><label>Gama</label><select id="hGama"></select></div>
-      <div class="field"><label>Modelo</label><select id="hModelo"></select></div>
+      <div class="field combo" style="flex:2;min-width:240px">
+        <label>Modelo</label>
+        <input id="hModelo" type="text" autocomplete="off" placeholder="Escribí para buscar…">
+        <button type="button" class="combo-x hidden" id="hModeloX" title="Limpiar">&times;</button>
+        <div class="combo-pop hidden" id="hModeloPop"></div>
+      </div>
     </div>
     <div id="hDetalle"></div>`;
   $('#hTipoNav').innerHTML=Object.keys(TIPO_LABEL).map(t=>`<button data-t="${t}">${TIPO_LABEL[t]}</button>`).join('');
   $('#hTipoNav').querySelectorAll('button').forEach(b=>b.onclick=()=>{
-    state.histTipo=b.dataset.t; state.histGamaF=''; state.histSel=null; poblarHistorico(true);
+    state.histTipo=b.dataset.t; state.histMarcaF=''; state.histGamaF=''; state.histSel=null; poblarHistorico(true);
   });
-  $('#hGama').onchange=()=>{ state.histGamaF=$('#hGama').value; state.histSel=null; poblarHistorico(false); };
-  $('#hModelo').onchange=e=>{ state.histSel=e.target.value?+e.target.value:null; state.histFiltro=null; renderHistorico(); };
+  $('#hMarca').onchange=()=>{ state.histMarcaF=$('#hMarca').value; state.histSel=null; poblarHistorico(false); };
+  $('#hGama').onchange =()=>{ state.histGamaF =$('#hGama').value;  state.histSel=null; poblarHistorico(false); };
+  montarComboModelos();
   poblarHistorico(true);
 }
-function poblarHistorico(rebuildGama){
+/* Modelos que cumplen los filtros activos del histórico */
+function modelosHistorico(){
+  return state.productos
+    .filter(p=>p.tipo===state.histTipo)
+    .filter(p=>!state.histMarcaF || p.marca===state.histMarcaF)
+    .filter(p=>!state.histGamaF  || p.gama===state.histGamaF)
+    .sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo));
+}
+/* Combo con búsqueda por texto para elegir el modelo */
+function montarComboModelos(){
+  const inp=$('#hModelo'), pop=$('#hModeloPop'), x=$('#hModeloX');
+  let vista=[], idx=-1;
+
+  const pintar=q=>{
+    const t=(q||'').toLowerCase().trim();
+    vista=modelosHistorico().filter(p=>!t || (p.marca+' '+p.modelo).toLowerCase().includes(t));
+    idx=-1;
+    pop.innerHTML = vista.length
+      ? vista.map((p,i)=>`<div data-i="${i}">${esc(p.marca)} · <b>${esc(p.modelo)}</b>${p.gama?` <span class="muted" style="font-size:12px">· ${esc(p.gama)}</span>`:''}</div>`).join('')
+      : `<div class="none">Sin modelos que coincidan</div>`;
+    pop.querySelectorAll('[data-i]').forEach(el=>el.onmousedown=e=>{ e.preventDefault(); elegir(vista[+el.dataset.i]); });
+  };
+  const abrir =q=>{ pintar(q); pop.classList.remove('hidden'); };
+  const cerrar=()=>pop.classList.add('hidden');
+  const marcar=()=>{
+    pop.querySelectorAll('[data-i]').forEach((el,i)=>el.classList.toggle('on',i===idx));
+    const el=pop.querySelector('.on'); if(el) el.scrollIntoView({block:'nearest'});
+  };
+  const elegir=p=>{
+    if(!p) return;
+    state.histSel=p.id; state.histFiltro=null;
+    inp.value=`${p.marca} · ${p.modelo}`;
+    x.classList.remove('hidden');
+    cerrar(); renderHistorico();
+  };
+
+  inp.onfocus =()=>{ inp.select(); abrir(''); };
+  inp.oninput =()=>{ x.classList.toggle('hidden',!inp.value); abrir(inp.value); };
+  inp.onblur  =()=>setTimeout(()=>{ cerrar(); sincronizarCombo(); },150);
+  inp.onkeydown=e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      if(pop.classList.contains('hidden')) return abrir(inp.value);
+      if(!vista.length) return;
+      idx = e.key==='ArrowDown' ? Math.min(idx+1,vista.length-1) : Math.max(idx-1,0);
+      marcar();
+    }else if(e.key==='Enter'){
+      e.preventDefault();
+      elegir(vista[idx>=0?idx:0]);
+    }else if(e.key==='Escape'){
+      cerrar(); inp.blur();
+    }
+  };
+  x.onclick=()=>{
+    state.histSel=null; state.histFiltro=null;
+    inp.value=''; x.classList.add('hidden');
+    renderHistorico(); inp.focus();
+  };
+}
+/* Deja el texto del combo consistente con el modelo realmente elegido */
+function sincronizarCombo(){
+  const inp=$('#hModelo'), x=$('#hModeloX');
+  if(!inp) return;
+  const p=state.productos.find(z=>z.id===state.histSel);
+  inp.value = p ? `${p.marca} · ${p.modelo}` : '';
+  if(x) x.classList.toggle('hidden',!p);
+}
+function poblarHistorico(rebuildFiltros){
   $('#hTipoNav').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.t===state.histTipo));
   const base=state.productos.filter(p=>p.tipo===state.histTipo);
-  if(rebuildGama){
+  if(rebuildFiltros){
+    const marcas=[...new Set(base.map(p=>p.marca).filter(Boolean))].sort();
+    $('#hMarca').innerHTML='<option value="">Todas las marcas</option>'+
+      marcas.map(m=>`<option ${state.histMarcaF===m?'selected':''}>${esc(m)}</option>`).join('');
     const gamas=[...new Set(base.map(p=>p.gama).filter(Boolean))].sort();
-    $('#hGama').innerHTML='<option value="">Todas las gamas</option>'+gamas.map(g=>`<option ${state.histGamaF===g?'selected':''}>${esc(g)}</option>`).join('');
+    $('#hGama').innerHTML='<option value="">Todas las gamas</option>'+
+      gamas.map(g=>`<option ${state.histGamaF===g?'selected':''}>${esc(g)}</option>`).join('');
   }
-  let modelos=base;
-  if(state.histGamaF) modelos=modelos.filter(p=>p.gama===state.histGamaF);
-  modelos.sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo));
-  $('#hModelo').innerHTML='<option value="">— elige un modelo —</option>'+
-    modelos.map(p=>`<option value="${p.id}" ${state.histSel===p.id?'selected':''}>${esc(p.marca)} · ${esc(p.modelo)}</option>`).join('');
+  // Si el modelo elegido ya no cumple los filtros, se suelta la selección
+  if(state.histSel!=null && !modelosHistorico().some(p=>p.id===state.histSel)) state.histSel=null;
+  sincronizarCombo();
   renderHistorico();
 }
 function renderHistorico(){
