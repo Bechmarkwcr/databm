@@ -141,6 +141,9 @@ tr.clickable{cursor:pointer}
 .empty{padding:40px;text-align:center;color:var(--muted)}
 .loader{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-3px}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* ===========  COMPARAR  =========== */
+.cmp-heads{display:grid;gap:14px;margin-bottom:16px}
+@media(max-width:760px){.cmp-heads{grid-template-columns:1fr!important}}
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px}
 .toolbar .field{margin-bottom:0}
 </style>
@@ -213,7 +216,7 @@ const state = {
   anioFiltro:null, anioActivo:'TODOS',
   precioSel:null, precioVerTodos:false, precioTipo:'celular', precioGamaF:'',
   histSel:null, histFiltro:null, histActivo:'TODOS', histTipo:'celular', histGamaF:'',
-  cmpTipo:'celular', cmpA:null, cmpB:null
+  cmpTipo:'celular', cmpA:null, cmpB:null, cmpC:null
 };
 const esAdmin  = () => state.perfil && (state.perfil.rol==='admin' || state.perfil.rol==='super');
 const esSuper  = () => state.perfil && state.perfil.rol==='super';
@@ -572,29 +575,31 @@ function vComparar(v){
     <div class="toolbar">
       <div class="field"><label>Modelo A</label><select id="cmpA"></select></div>
       <div class="field"><label>Modelo B</label><select id="cmpB"></select></div>
+      <div class="field"><label>Modelo C <span style="text-transform:none;font-weight:400">(opcional)</span></label><select id="cmpC"></select></div>
     </div>
     <div id="cmpBody"></div>`;
   $('#cmpTipoNav').innerHTML=Object.keys(TIPO_LABEL).map(t=>`<button data-t="${t}">${TIPO_LABEL[t]}</button>`).join('');
   $('#cmpTipoNav').querySelectorAll('button').forEach(b=>b.onclick=()=>{
-    state.cmpTipo=b.dataset.t; state.cmpA=null; state.cmpB=null; poblarComparar();
+    state.cmpTipo=b.dataset.t; state.cmpA=null; state.cmpB=null; state.cmpC=null; poblarComparar();
   });
   $('#cmpA').onchange=e=>{ state.cmpA=e.target.value?+e.target.value:null; renderComparar(); };
   $('#cmpB').onchange=e=>{ state.cmpB=e.target.value?+e.target.value:null; renderComparar(); };
+  $('#cmpC').onchange=e=>{ state.cmpC=e.target.value?+e.target.value:null; renderComparar(); };
   poblarComparar();
 }
 function poblarComparar(){
   $('#cmpTipoNav').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.t===state.cmpTipo));
   const lista=state.productos.filter(p=>p.tipo===state.cmpTipo)
     .sort((a,b)=>a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo));
-  const opts=sel=>'<option value="">— elige —</option>'+lista.map(p=>`<option value="${p.id}" ${sel===p.id?'selected':''}>${esc(p.marca)} · ${esc(p.modelo)}</option>`).join('');
-  $('#cmpA').innerHTML=opts(state.cmpA);
-  $('#cmpB').innerHTML=opts(state.cmpB);
+  const opts=(sel,vacio)=>`<option value="">${vacio}</option>`+lista.map(p=>`<option value="${p.id}" ${sel===p.id?'selected':''}>${esc(p.marca)} · ${esc(p.modelo)}</option>`).join('');
+  $('#cmpA').innerHTML=opts(state.cmpA,'— elige —');
+  $('#cmpB').innerHTML=opts(state.cmpB,'— elige —');
+  $('#cmpC').innerHTML=opts(state.cmpC,'— ninguno —');
   renderComparar();
 }
-function cmpCabezal(p,otro){
+function cmpCabezal(p,mejorGlobal,empate){
   const mej=mejorEfectivo(p.id);
-  const mejOtro=otro?mejorEfectivo(otro.id):null;
-  const gana = mej!=null && mejOtro!=null && mej<mejOtro;
+  const gana = mej!=null && mejorGlobal!=null && mej===mejorGlobal && !empate;
   return `<div class="card" style="margin:0">
     <div class="card-b" style="text-align:center">
       ${p.imagen_url?`<img src="${esc(p.imagen_url)}" style="max-height:150px;max-width:100%;object-fit:contain;margin:0 auto 10px;display:block">`:''}
@@ -606,61 +611,72 @@ function cmpCabezal(p,otro){
 }
 function renderComparar(){
   const c=$('#cmpBody');
-  const A=state.productos.find(x=>x.id===state.cmpA);
-  const B=state.productos.find(x=>x.id===state.cmpB);
-  if(!A||!B){
-    c.innerHTML=`<div class="card"><div class="empty">Elige <b>dos modelos</b> de la categoría <b>${TIPO_LABEL[state.cmpTipo]}</b> para compararlos lado a lado: precios por proveedor y características.</div></div>`;
+  const ids=[state.cmpA,state.cmpB,state.cmpC].filter(x=>x!=null);
+  const sel=ids.map(id=>state.productos.find(x=>x.id===id)).filter(Boolean);
+  if(sel.length<2){
+    c.innerHTML=`<div class="card"><div class="empty">Elige <b>dos o tres modelos</b> de la categoría <b>${TIPO_LABEL[state.cmpTipo]}</b> para compararlos lado a lado: precios por proveedor y características.</div></div>`;
     return;
   }
-  if(A.id===B.id){
-    c.innerHTML=`<div class="card"><div class="empty">Elige dos modelos distintos.</div></div>`;
+  if(new Set(ids).size!==ids.length){
+    c.innerHTML=`<div class="card"><div class="empty">Elige modelos distintos en cada casilla.</div></div>`;
     return;
   }
+  const n=sel.length;
+  const nombre=p=>`${esc(p.marca)} ${esc(p.modelo)}`;
+
   // --- Precios por proveedor ---
-  const mA=efectivoPorProv(A.id), mB=efectivoPorProv(B.id);
-  const provIds=[...new Set([...Object.keys(mA),...Object.keys(mB)].map(Number))]
+  const mapas=sel.map(p=>efectivoPorProv(p.id));
+  const provIds=[...new Set(mapas.flatMap(m=>Object.keys(m)).map(Number))]
     .sort((x,y)=>(state.provById[x]?.nombre||'').localeCompare(state.provById[y]?.nombre||''));
   const filasPrec=provIds.map(id=>{
-    const a=mA[id]?.ef, b=mB[id]?.ef;
-    const aWin=a!=null&&b!=null&&a<b, bWin=a!=null&&b!=null&&b<a;
-    return `<tr>
-      <td><b>${esc(state.provById[id]?.nombre||'?')}</b></td>
-      <td class="${aWin?'best':''}">${a!=null?money(a):'<span class="muted">—</span>'}</td>
-      <td class="${bWin?'best':''}">${b!=null?money(b):'<span class="muted">—</span>'}</td></tr>`;
-  }).join('') || `<tr><td colspan="3" class="empty">Ninguno de los dos tiene precios cargados.</td></tr>`;
+    const vals=mapas.map(m=>(m[id]?.ef??null));
+    const validos=vals.filter(x=>x!=null);
+    const min=validos.length>1?Math.min(...validos):null;
+    const unico=min!=null && validos.filter(x=>x===min).length===1;
+    return `<tr><td><b>${esc(state.provById[id]?.nombre||'?')}</b></td>`+
+      vals.map(x=>`<td class="${unico&&x===min?'best':''}">${x!=null?money(x):'<span class="muted">—</span>'}</td>`).join('')+
+      `</tr>`;
+  }).join('') || `<tr><td colspan="${n+1}" class="empty">Ninguno de los modelos seleccionados tiene precios cargados.</td></tr>`;
 
-  const mejA=mejorEfectivo(A.id), mejB=mejorEfectivo(B.id);
+  // --- Resumen ---
+  const mejores=sel.map(p=>mejorEfectivo(p.id));
+  const conPrecio=mejores.filter(x=>x!=null);
+  const mejorGlobal=conPrecio.length?Math.min(...conPrecio):null;
+  const empate = mejorGlobal!=null && mejores.filter(x=>x===mejorGlobal).length>1;
   let resumen='';
-  if(mejA!=null&&mejB!=null){
-    const dif=Math.abs(mejA-mejB);
-    const masBarato=mejA<mejB?A:(mejB<mejA?B:null);
-    resumen = masBarato
-      ? `<b>${esc(masBarato.marca)} ${esc(masBarato.modelo)}</b> es ${money(dif)} más barato en su mejor precio efectivo.`
-      : `Ambos tienen el mismo mejor precio efectivo (${money(mejA)}).`;
+  if(conPrecio.length>=2){
+    if(empate){
+      resumen=`Hay empate en el mejor precio efectivo (${money(mejorGlobal)}).`;
+    }else{
+      const ganador=sel[mejores.indexOf(mejorGlobal)];
+      const segundo=Math.min(...conPrecio.filter(x=>x!==mejorGlobal));
+      resumen=`<b>${nombre(ganador)}</b> es el más barato con ${money(mejorGlobal)}, ${money(segundo-mejorGlobal)} por debajo del siguiente.`;
+    }
   }
 
   // --- Características ---
-  const campos=CATALOGO[A.tipo];
+  const campos=CATALOGO[sel[0].tipo];
   const filasCar=campos.map(cmp=>{
-    const va=A.caracteristicas?.[cmp]||'—', vb=B.caracteristicas?.[cmp]||'—';
-    const dif = va!==vb && (va!=='—'||vb!=='—');
-    return `<tr${dif?' style="background:#fffbe9"':''}>
-      <td class="muted" style="white-space:nowrap">${esc(cmp)}</td>
-      <td${dif?' style="font-weight:600"':''}>${esc(va)}</td>
-      <td${dif?' style="font-weight:600"':''}>${esc(vb)}</td></tr>`;
+    const vals=sel.map(p=>p.caracteristicas?.[cmp]||'—');
+    const dif = new Set(vals).size>1;
+    return `<tr${dif?' style="background:#fffbe9"':''}>`+
+      `<td class="muted" style="white-space:nowrap">${esc(cmp)}</td>`+
+      vals.map(x=>`<td${dif?' style="font-weight:600"':''}>${esc(x)}</td>`).join('')+
+      `</tr>`;
   }).join('');
 
+  const th=sel.map(p=>`<th>${nombre(p)}</th>`).join('');
+
   c.innerHTML=`
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
-      ${cmpCabezal(A,B)}
-      ${cmpCabezal(B,A)}
+    <div class="cmp-heads" style="grid-template-columns:repeat(${n},minmax(0,1fr))">
+      ${sel.map(p=>cmpCabezal(p,mejorGlobal,empate)).join('')}
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="card-h">Precios por proveedor (último de cada uno)</div>
       <div class="card-b">
         ${resumen?`<p style="margin:0 0 12px;color:var(--teal-900)">${resumen}</p>`:''}
         <div class="table-wrap"><table>
-          <thead><tr><th>Proveedor</th><th>${esc(A.marca)} ${esc(A.modelo)}</th><th>${esc(B.marca)} ${esc(B.modelo)}</th></tr></thead>
+          <thead><tr><th>Proveedor</th>${th}</tr></thead>
           <tbody>${filasPrec}</tbody></table></div>
         <p class="muted" style="font-size:12px;margin:8px 0 0">Se muestra el precio efectivo (promoción si existe, si no el precio normal) más reciente por proveedor. En verde, el más barato de cada fila.</p>
       </div>
@@ -669,9 +685,9 @@ function renderComparar(){
       <div class="card-h">Características</div>
       <div class="card-b">
         <div class="table-wrap"><table>
-          <thead><tr><th>Característica</th><th>${esc(A.marca)} ${esc(A.modelo)}</th><th>${esc(B.marca)} ${esc(B.modelo)}</th></tr></thead>
+          <thead><tr><th>Característica</th>${th}</tr></thead>
           <tbody>${filasCar}</tbody></table></div>
-        <p class="muted" style="font-size:12px;margin:8px 0 0">Las filas resaltadas son las características en las que difieren.</p>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Las filas resaltadas son las características en las que hay diferencias entre los modelos.</p>
       </div>
     </div>`;
 }
