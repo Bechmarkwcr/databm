@@ -99,6 +99,7 @@ tbody tr.sel{background:#d3ebe9}
 tr.clickable{cursor:pointer}
 .chip{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
 .chip.act{background:#e2f4ec;color:var(--ok)} .chip.obs{background:#f3e6e5;color:var(--bad)}
+.chip.nue{background:#fdf1dd;color:#a2660f}
 .pill-gama{background:var(--teal-100);color:var(--teal-700);padding:2px 9px;border-radius:6px;font-size:12px;font-weight:600}
 .best{color:var(--ok);font-weight:700}
 .muted{color:var(--muted)}
@@ -141,6 +142,15 @@ tr.clickable{cursor:pointer}
 .empty{padding:40px;text-align:center;color:var(--muted)}
 .loader{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-3px}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* ===========  NOVEDADES  =========== */
+.nov-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow:auto}
+.nov-item{display:flex;align-items:center;gap:11px;padding:9px 11px;border:1px solid var(--line);
+  border-radius:11px;background:#fff;cursor:pointer;transition:.15s}
+.nov-item:hover{background:var(--teal-100);border-color:var(--teal-500)}
+.nov-img{width:44px;height:44px;flex-shrink:0;border-radius:9px;background:#f2f7f6;display:grid;
+  place-items:center;overflow:hidden;color:var(--muted);font-size:12px}
+.nov-img img{width:100%;height:100%;object-fit:contain}
+
 /* ===========  COMPARAR  =========== */
 .cmp-heads{display:grid;gap:14px;margin-bottom:16px}
 @media(max-width:760px){.cmp-heads{grid-template-columns:1fr!important}}
@@ -226,6 +236,39 @@ const $ = (s,r=document)=>r.querySelector(s);
 const money = v => v==null||v===''?'—':new Intl.NumberFormat('es-CR',{style:'currency',currency:'CRC',maximumFractionDigits:0}).format(v);
 const fecha = d => d? new Date(d+'T00:00:00').toLocaleDateString('es-CR',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* --- ESTADO DEL MODELO ---------------------------------------------
+   'Nuevo' es un estado temporal: al cumplir MESES_NUEVO mes(es) desde
+   su creación, el modelo pasa a mostrarse como 'Activo' automáticamente.
+   'Obsoleto' siempre se respeta porque se marca a mano.               */
+const MESES_NUEVO = 1;
+function venceNuevo(p){
+  const base = p.creado_en || p.actualizado_en;
+  if(!base) return null;
+  const d = new Date(base);
+  if(isNaN(d)) return null;
+  d.setMonth(d.getMonth()+MESES_NUEVO);
+  return d;
+}
+function estadoDe(p){
+  if(!p) return '';
+  if(p.estado!=='Nuevo') return p.estado;
+  const v = venceNuevo(p);
+  return (v && v<=new Date()) ? 'Activo' : 'Nuevo';
+}
+function chipEstado(p){
+  const e = estadoDe(p);
+  const cls = e==='Nuevo' ? 'nue' : (e==='Obsoleto' ? 'obs' : 'act');
+  let tip = '';
+  if(e==='Nuevo'){
+    const v=venceNuevo(p);
+    if(v){
+      const dias=Math.max(0,Math.ceil((v-new Date())/86400000));
+      tip=` title="Pasa a Activo en ${dias} día${dias===1?'':'s'}"`;
+    }
+  }
+  return `<span class="chip ${cls}"${tip}>${esc(e)}</span>`;
+}
 function toast(msg,bad=false){const t=$('#toast');t.textContent=msg;t.className='show'+(bad?' bad':'');setTimeout(()=>t.className='',2600);}
 function modal(title,bodyHTML){
   const root=$('#modalRoot');
@@ -264,6 +307,59 @@ async function iniciarSesion(){
   await cargarTodo();
   construirNav();
   irA('analisis');
+  revisarNovedades();
+}
+
+/* ===================  NOVEDADES (modelos nuevos)  ===================
+   Se muestran una sola vez por usuario: al cerrar el aviso se guarda la
+   marca de tiempo en su perfil (vía RPC) y ya no vuelve a aparecer.     */
+function revisarNovedades(){
+  const desde = state.perfil && state.perfil.novedades_vistas_en;
+  if(!desde) return;                       // sin marca previa: no se avisa nada
+  const corte = new Date(desde);
+  if(isNaN(corte)) return;
+  const nuevos = state.productos
+    .filter(p => p.creado_en && new Date(p.creado_en) > corte)
+    .sort((a,b) => new Date(b.creado_en) - new Date(a.creado_en));
+  if(!nuevos.length) return;
+  mostrarNovedades(nuevos);
+}
+async function marcarNovedadesVistas(){
+  if(state.perfil) state.perfil.novedades_vistas_en = new Date().toISOString();
+  try{ await sb.rpc('marcar_novedades_vistas'); }
+  catch(e){ console.warn('No se pudo marcar las novedades como vistas', e); }
+}
+function mostrarNovedades(list){
+  const n = list.length;
+  const items = list.map(p => `
+    <div class="nov-item" data-nov="${p.id}" data-t="${esc(p.tipo)}">
+      <div class="nov-img">${p.imagen_url?`<img src="${esc(p.imagen_url)}" alt="">`:'—'}</div>
+      <div style="min-width:0">
+        <div style="font-weight:650;color:var(--teal-900)">${esc(p.marca)} · ${esc(p.modelo)}</div>
+        <div class="muted" style="font-size:12px">
+          ${esc(TIPO_SING[p.tipo]||p.tipo)}${p.gama?' · '+esc(p.gama):''} · agregado el ${fecha(String(p.creado_en).slice(0,10))}
+        </div>
+      </div>
+      <span class="muted" style="margin-left:auto;font-size:18px">›</span>
+    </div>`).join('');
+
+  const m = modal(n===1?'Se agregó un modelo nuevo':`Se agregaron ${n} modelos nuevos`, `
+    <p class="muted" style="margin:0 0 12px;font-size:13px">
+      Esto se muestra una sola vez. Tocá un modelo para verlo en el análisis.
+    </p>
+    <div class="nov-list">${items}</div>
+    <button class="btn" id="novOk" style="width:100%;margin-top:14px">Entendido</button>`);
+
+  const cerrar = () => { marcarNovedadesVistas(); m.close(); };
+  m.root.querySelector('.x').onclick = cerrar;
+  m.root.querySelector('.modal-bg').onclick = e => { if(e.target.classList.contains('modal-bg')) cerrar(); };
+  $('#novOk').onclick = cerrar;
+  m.root.querySelectorAll('[data-nov]').forEach(el => el.onclick = () => {
+    state.tipoActual = el.dataset.t;
+    state.seleccion  = +el.dataset.nov;
+    cerrar();
+    irA('analisis');
+  });
 }
 
 /* ===================  CARGA DE DATOS  =================== */
@@ -343,7 +439,7 @@ function vAnalisis(v){
       <div class="field"><label>Marca</label><select id="qMarca"></select></div>
       <div class="field"><label>Gama</label><select id="qGama"></select></div>
       <div class="field"><label>Estado</label><select id="qEstado">
-        <option value="">Todos</option><option>Activo</option><option>Obsoleto</option></select></div>
+        <option value="">Todos</option><option>Nuevo</option><option>Activo</option><option>Obsoleto</option></select></div>
     </div>
     <div class="split">
       <div class="card"><div class="card-h">Modelos · <span id="cntModelos" class="muted"></span></div>
@@ -371,7 +467,7 @@ function pintarFilaModelos(){
   if(q) lista=lista.filter(p=>(p.marca+' '+p.modelo).toLowerCase().includes(q));
   if(fm) lista=lista.filter(p=>p.marca===fm);
   if(fg) lista=lista.filter(p=>p.gama===fg);
-  if(fe) lista=lista.filter(p=>p.estado===fe);
+  if(fe) lista=lista.filter(p=>estadoDe(p)===fe);
   $('#cntModelos').textContent=lista.length+' resultado'+(lista.length===1?'':'s');
   const head=`<thead><tr><th>Marca</th><th>Modelo</th><th>Gama</th><th>Estado</th><th>Último precio</th><th>Promoción</th></tr></thead>`;
   const body=lista.map(p=>{
@@ -381,7 +477,7 @@ function pintarFilaModelos(){
     return `<tr class="clickable ${state.seleccion===p.id?'sel':''}" data-id="${p.id}">
       <td>${esc(p.marca)}</td><td><b>${esc(p.modelo)}</b></td>
       <td>${p.gama?`<span class="pill-gama">${esc(p.gama)}</span>`:'—'}</td>
-      <td><span class="chip ${p.estado==='Activo'?'act':'obs'}">${esc(p.estado)}</span></td>
+      <td>${chipEstado(p)}</td>
       <td>${u&&u.precio!=null?`<span class="best">${precioTxt}</span>`:'—'}</td>
       <td>${promoTxt}</td></tr>`;
   }).join('') || `<tr><td colspan="6" class="empty">Sin modelos. Agrégalos en Administración.</td></tr>`;
@@ -604,7 +700,7 @@ function cmpCabezal(p,mejorGlobal,empate){
     <div class="card-b" style="text-align:center">
       ${p.imagen_url?`<img src="${esc(p.imagen_url)}" style="max-height:150px;max-width:100%;object-fit:contain;margin:0 auto 10px;display:block">`:''}
       <div style="font-weight:700;color:var(--teal-900)">${esc(p.marca)} · ${esc(p.modelo)}</div>
-      <div style="margin:6px 0">${p.gama?`<span class="pill-gama">${esc(p.gama)}</span>`:''} <span class="chip ${p.estado==='Activo'?'act':'obs'}">${esc(p.estado)}</span></div>
+      <div style="margin:6px 0">${p.gama?`<span class="pill-gama">${esc(p.gama)}</span>`:''} ${chipEstado(p)}</div>
       <div style="font-size:22px;font-weight:800;color:${gana?'#1f8a5b':'var(--teal-900)'}">${money(mej)}${gana?' <span style="font-size:12px">▼ más barato</span>':''}</div>
       <div class="muted" style="font-size:12px">mejor precio efectivo</div>
     </div></div>`;
@@ -758,7 +854,7 @@ function datasetExport(key){
   }
   const campos=CATALOGO[key];
   const rows=state.productos.filter(p=>p.tipo===key).map(p=>{
-    const o={Marca:p.marca,Modelo:p.modelo,Gama:p.gama||'',Estado:p.estado};
+    const o={Marca:p.marca,Modelo:p.modelo,Gama:p.gama||'',Estado:estadoDe(p)};
     campos.forEach(c=>o[c]=p.caracteristicas?.[c]||'');
     o['Mejor precio']=mejorPrecioGlobal(p.id)??''; return o;
   });
@@ -814,7 +910,7 @@ function aModelos(){
       <div class="row">
         <div class="field"><label>Tipo</label><select id="mTipo">
           ${Object.keys(TIPO_LABEL).map(t=>`<option value="${t}">${TIPO_SING[t]}</option>`).join('')}</select></div>
-        <div class="field"><label>Estado</label><select id="mEstado"><option>Activo</option><option>Obsoleto</option></select></div>
+        <div class="field"><label>Estado</label><select id="mEstado"><option>Nuevo</option><option>Activo</option><option>Obsoleto</option></select></div>
       </div>
       <div class="row">
         <div class="field"><label>Marca</label><input id="mMarca" placeholder="APPLE"></div>
@@ -848,12 +944,12 @@ function aModelos(){
 function pintarTablaModelos(){
   const list=state.productos.slice().sort((a,b)=>a.tipo.localeCompare(b.tipo)||a.marca.localeCompare(b.marca));
   $('#mCnt').textContent=list.length;
-  $('#mTabla').innerHTML=`<thead><tr><th>Tipo</th><th>Marca</th><th>Modelo</th><th>Gama</th><th></th></tr></thead><tbody>`+
+  $('#mTabla').innerHTML=`<thead><tr><th>Tipo</th><th>Marca</th><th>Modelo</th><th>Gama</th><th>Estado</th><th></th></tr></thead><tbody>`+
     (list.map(p=>`<tr><td>${TIPO_SING[p.tipo]}</td><td>${esc(p.marca)}</td><td><b>${esc(p.modelo)}</b></td>
-      <td>${esc(p.gama||'—')}</td><td style="text-align:right">
+      <td>${esc(p.gama||'—')}</td><td>${chipEstado(p)}</td><td style="text-align:right">
         <button class="btn ghost sm" data-edit="${p.id}">Editar</button>
         <button class="btn danger sm" data-del="${p.id}">×</button></td></tr>`).join('')
-     || `<tr><td colspan="5" class="empty">Aún no hay modelos.</td></tr>`)+`</tbody>`;
+     || `<tr><td colspan="6" class="empty">Aún no hay modelos.</td></tr>`)+`</tbody>`;
   $('#mTabla').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>cargarModeloEnForm(+b.dataset.edit));
   $('#mTabla').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>borrarModelo(+b.dataset.del));
 }
@@ -862,7 +958,7 @@ function cargarModeloEnForm(id){
   state.editId=id;
   $('#formTitulo').textContent='Editar: '+p.marca+' '+p.modelo;
   $('#mTipo').value=p.tipo; $('#mTipo').onchange();
-  $('#mEstado').value=p.estado; $('#mMarca').value=p.marca; $('#mModelo').value=p.modelo; $('#mGama').value=p.gama||'';
+  $('#mEstado').value=estadoDe(p); $('#mMarca').value=p.marca; $('#mModelo').value=p.modelo; $('#mGama').value=p.gama||'';
   $('#mCaract').querySelectorAll('[data-c]').forEach(i=>{ i.value=p.caracteristicas?.[i.dataset.c]||''; });
   $('#mCancelar').classList.remove('hidden');
   window.scrollTo({top:0,behavior:'smooth'});
@@ -906,7 +1002,7 @@ function aPrecios(){
   $('#adminBody').innerHTML=`
    <div class="subnav" id="apTipoNav"></div>
    <div class="split">
-    <div class="card"><div class="card-h">Modelos activos · <span id="apCnt" class="muted"></span></div>
+    <div class="card"><div class="card-h">Modelos vigentes · <span id="apCnt" class="muted"></span></div>
       <div style="padding:10px 12px 4px">
         <div class="row">
           <div class="field"><label>Gama</label><select id="apGama"></select></div>
@@ -930,7 +1026,7 @@ function aPrecios(){
 function pintarListaPreciosModelos(rebuildGama){
   const nav=$('#apTipoNav');
   if(nav) nav.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.t===state.precioTipo));
-  const base=state.productos.filter(p=>p.estado==='Activo' && p.tipo===state.precioTipo);
+  const base=state.productos.filter(p=>estadoDe(p)!=='Obsoleto' && p.tipo===state.precioTipo);
   if(rebuildGama && $('#apGama')){
     const gamas=[...new Set(base.map(p=>p.gama).filter(Boolean))].sort();
     $('#apGama').innerHTML='<option value="">Todas las gamas</option>'+gamas.map(g=>`<option ${state.precioGamaF===g?'selected':''}>${esc(g)}</option>`).join('');
@@ -950,7 +1046,7 @@ function pintarListaPreciosModelos(rebuildGama){
       return `<tr class="clickable ${state.precioSel===p.id?'sel':''}" data-id="${p.id}">
         <td><b>${esc(p.marca)}</b> ${esc(p.modelo)}<div class="muted" style="font-size:11px">${n} precio${n===1?'':'s'} cargado${n===1?'':'s'}</div></td>
         <td>${p.gama?`<span class="pill-gama">${esc(p.gama)}</span>`:'—'}</td><td class="muted">${info}</td></tr>`;
-    }).join('') || `<tr><td colspan="3" class="empty">Sin modelos activos en esta categoría.</td></tr>`)+`</tbody>`;
+    }).join('') || `<tr><td colspan="3" class="empty">Sin modelos vigentes en esta categoría.</td></tr>`)+`</tbody>`;
   $('#apTabla').querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>{
     state.precioSel=+tr.dataset.id; state.precioVerTodos=false;
     pintarListaPreciosModelos(false); renderPrecioDetalle();
