@@ -240,7 +240,8 @@ const state = {
   anioFiltro:null, anioActivo:'TODOS',
   precioSel:null, precioVerTodos:false, precioTipo:'celular', precioGamaF:'',
   histSel:null, histFiltro:null, histActivo:'TODOS', histTipo:'celular', histGamaF:'', histMarcaF:'',
-  cmpTipo:'celular', cmpA:null, cmpB:null, cmpC:null
+  cmpTipo:'celular', cmpA:null, cmpB:null, cmpC:null,
+  admMarcaF:'', admGamaF:''
 };
 const esAdmin  = () => state.perfil && (state.perfil.rol==='admin' || state.perfil.rol==='super');
 const esSuper  = () => state.perfil && state.perfil.rol==='super';
@@ -997,19 +998,21 @@ function aModelos(){
   $('#adminBody').innerHTML=`
    <div class="split">
     <div class="card"><div class="card-h" id="formTitulo">Nuevo modelo</div><div class="card-b">
+      <div id="mErr" class="err hidden"></div>
       <div class="row">
-        <div class="field"><label>Tipo</label><select id="mTipo">
+        <div class="field"><label>Tipo *</label><select id="mTipo">
+          <option value="">— elige el tipo —</option>
           ${Object.keys(TIPO_LABEL).map(t=>`<option value="${t}">${TIPO_SING[t]}</option>`).join('')}</select></div>
         <div class="field"><label>Estado</label><select id="mEstado"><option>Nuevo</option><option>Activo</option><option>Obsoleto</option></select></div>
       </div>
       <div class="row">
-        <div class="field"><label>Marca</label><input id="mMarca" placeholder="APPLE"></div>
-        <div class="field"><label>Modelo</label><input id="mModelo" placeholder="iPhone 17"></div>
+        <div class="field"><label>Marca *</label><input id="mMarca" placeholder="APPLE"></div>
+        <div class="field"><label>Modelo *</label><input id="mModelo" placeholder="iPhone 17"></div>
       </div>
-      <div class="field"><label>Gama / Categoría</label>
+      <div class="field"><label>Gama / Categoría *</label>
         <input id="mGama" list="gamasList" placeholder="Gama Alta">
         <datalist id="gamasList">${GAMAS.map(g=>`<option>${g}</option>`).join('')}</datalist></div>
-      <div class="field"><label>Foto del producto</label><input id="mImg" type="file" accept="image/*">
+      <div class="field"><label>Foto del producto *</label><input id="mImg" type="file" accept="image/*">
         <div id="mImgPrev" class="muted" style="font-size:12px"></div></div>
       <h3 style="font-size:13px;color:var(--teal-900);margin:8px 0">Características</h3>
       <div id="mCaract"></div>
@@ -1017,29 +1020,56 @@ function aModelos(){
         <button class="btn" id="mGuardar">Guardar modelo</button>
         <button class="btn ghost hidden" id="mCancelar">Cancelar edición</button>
       </div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">Los campos marcados con * son obligatorios.</p>
     </div></div>
     <div class="card"><div class="card-h">Modelos registrados · <span id="mCnt" class="muted"></span></div>
-      <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:65vh;border:0">
+      <div style="padding:10px 12px 4px">
+        <div class="row">
+          <div class="field"><label>Marca</label><select id="mfMarca"></select></div>
+          <div class="field"><label>Gama</label><select id="mfGama"></select></div>
+        </div>
+      </div>
+      <div class="card-b" style="padding:0"><div class="table-wrap" style="max-height:58vh;border:0">
         <table id="mTabla"></table></div></div></div>
    </div>`;
   const rebuild=()=>{ const t=$('#mTipo').value;
-    $('#mCaract').innerHTML=`<div class="row">`+CATALOGO[t].map(c=>
-      `<div class="field" style="min-width:200px"><label>${esc(c)}</label><input data-c="${esc(c)}"></div>`).join('')+`</div>`; };
-  $('#mTipo').onchange=rebuild; rebuild();
-  $('#mImg').onchange=e=>{ const f=e.target.files[0]; $('#mImgPrev').textContent=f?('Seleccionada: '+f.name):''; };
+    $('#mCaract').innerHTML = t
+      ? `<div class="row">`+CATALOGO[t].map(c=>
+          `<div class="field" style="min-width:200px"><label>${esc(c)}</label><input data-c="${esc(c)}"></div>`).join('')+`</div>`
+      : `<p class="muted" style="font-size:13px;margin:0">Elegí primero el tipo para ver sus características.</p>`; };
+  $('#mTipo').onchange=()=>{ rebuild(); marcarCampo('#mTipo',false); }; rebuild();
+  ['#mMarca','#mModelo','#mGama'].forEach(x=>$(x).oninput=()=>marcarCampo(x,false));
+  $('#mImg').onchange=e=>{ const f=e.target.files[0];
+    $('#mImgPrev').textContent=f?('Seleccionada: '+f.name):'';
+    marcarCampo('#mImg',!f); };
   $('#mGuardar').onclick=guardarModelo;
   $('#mCancelar').onclick=aModelos;
-  pintarTablaModelos();
+  $('#mfMarca').onchange=()=>{ state.admMarcaF=$('#mfMarca').value; pintarTablaModelos(); };
+  $('#mfGama').onchange =()=>{ state.admGamaF =$('#mfGama').value;  pintarTablaModelos(); };
+  pintarTablaModelos(true);
 }
-function pintarTablaModelos(){
-  const list=state.productos.slice().sort((a,b)=>a.tipo.localeCompare(b.tipo)||a.marca.localeCompare(b.marca));
-  $('#mCnt').textContent=list.length;
+function pintarTablaModelos(rebuildFiltros){
+  const todos=state.productos;
+  if(rebuildFiltros){
+    const marcas=[...new Set(todos.map(p=>p.marca).filter(Boolean))].sort();
+    $('#mfMarca').innerHTML='<option value="">Todas las marcas</option>'+
+      marcas.map(m=>`<option ${state.admMarcaF===m?'selected':''}>${esc(m)}</option>`).join('');
+    const gamas=[...new Set(todos.map(p=>p.gama).filter(Boolean))].sort();
+    $('#mfGama').innerHTML='<option value="">Todas las gamas</option>'+
+      gamas.map(g=>`<option ${state.admGamaF===g?'selected':''}>${esc(g)}</option>`).join('');
+  }
+  const list=todos
+    .filter(p=>!state.admMarcaF || p.marca===state.admMarcaF)
+    .filter(p=>!state.admGamaF  || p.gama===state.admGamaF)
+    .sort((a,b)=>a.tipo.localeCompare(b.tipo)||a.marca.localeCompare(b.marca)||a.modelo.localeCompare(b.modelo));
+  const hayFiltro = state.admMarcaF || state.admGamaF;
+  $('#mCnt').textContent = hayFiltro ? `${list.length} de ${todos.length}` : list.length;
   $('#mTabla').innerHTML=`<thead><tr><th>Tipo</th><th>Marca</th><th>Modelo</th><th>Gama</th><th>Estado</th><th></th></tr></thead><tbody>`+
     (list.map(p=>`<tr><td>${TIPO_SING[p.tipo]}</td><td>${esc(p.marca)}</td><td><b>${esc(p.modelo)}</b></td>
       <td>${esc(p.gama||'—')}</td><td>${chipEstado(p)}</td><td style="text-align:right">
         <button class="btn ghost sm" data-edit="${p.id}">Editar</button>
         <button class="btn danger sm" data-del="${p.id}">×</button></td></tr>`).join('')
-     || `<tr><td colspan="6" class="empty">Aún no hay modelos.</td></tr>`)+`</tbody>`;
+     || `<tr><td colspan="6" class="empty">${hayFiltro?'Ningún modelo coincide con los filtros.':'Aún no hay modelos.'}</td></tr>`)+`</tbody>`;
   $('#mTabla').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>cargarModeloEnForm(+b.dataset.edit));
   $('#mTabla').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>borrarModelo(+b.dataset.del));
 }
@@ -1050,21 +1080,57 @@ function cargarModeloEnForm(id){
   $('#mTipo').value=p.tipo; $('#mTipo').onchange();
   $('#mEstado').value=estadoDe(p); $('#mMarca').value=p.marca; $('#mModelo').value=p.modelo; $('#mGama').value=p.gama||'';
   $('#mCaract').querySelectorAll('[data-c]').forEach(i=>{ i.value=p.caracteristicas?.[i.dataset.c]||''; });
+  $('#mErr').classList.add('hidden');
+  ['#mTipo','#mMarca','#mModelo','#mGama','#mImg'].forEach(x=>marcarCampo(x,false));
+  $('#mImg').value='';
+  $('#mImgPrev').innerHTML = p.imagen_url
+    ? 'Ya tiene foto. Subí una solo si querés reemplazarla.'
+    : '<span style="color:var(--bad)">Este modelo no tiene foto: hay que subir una.</span>';
   $('#mCancelar').classList.remove('hidden');
   window.scrollTo({top:0,behavior:'smooth'});
 }
+function marcarCampo(sel,mal){
+  const el=$(sel); if(!el) return;
+  el.style.borderColor = mal ? 'var(--bad)' : '';
+  el.style.background  = mal ? '#fdf4f3'   : '';
+}
 async function guardarModelo(){
-  const btn=$('#mGuardar'); const tipo=$('#mTipo').value;
+  const btn=$('#mGuardar'), err=$('#mErr');
+  const tipo=$('#mTipo').value;
   const marca=$('#mMarca').value.trim(), modelo=$('#mModelo').value.trim();
-  if(!marca||!modelo){toast('Marca y modelo son obligatorios',true);return;}
+  const gama=$('#mGama').value.trim();
+  const file=$('#mImg').files[0];
+  const editando=state.productos.find(x=>x.id===state.editId);
+  // Al editar no se exige volver a subir la foto si ya tiene una guardada
+  const faltaFoto = !file && !(editando && editando.imagen_url);
+
+  const faltantes=[];
+  if(!tipo)   faltantes.push('Tipo');
+  if(!marca)  faltantes.push('Marca');
+  if(!modelo) faltantes.push('Modelo');
+  if(!gama)   faltantes.push('Gama / Categoría');
+  if(faltaFoto) faltantes.push('Foto del producto');
+
+  marcarCampo('#mTipo',!tipo); marcarCampo('#mMarca',!marca);
+  marcarCampo('#mModelo',!modelo); marcarCampo('#mGama',!gama);
+  marcarCampo('#mImg',faltaFoto);
+
+  if(faltantes.length){
+    err.innerHTML='<b>No se puede guardar.</b> Falta completar: '+faltantes.join(', ')+'.';
+    err.classList.remove('hidden');
+    err.scrollIntoView({behavior:'smooth',block:'center'});
+    toast('Faltan campos obligatorios',true);
+    return;
+  }
+  err.classList.add('hidden');
+
   const caracteristicas={};
   $('#mCaract').querySelectorAll('[data-c]').forEach(i=>{ if(i.value.trim()) caracteristicas[i.dataset.c]=i.value.trim(); });
   btn.disabled=true; btn.innerHTML='<span class="loader"></span> Guardando…';
   try{
     let imagen_url;
-    const f=$('#mImg').files[0];
-    if(f) imagen_url=await subirImagen(f,'productos');
-    const payload={tipo,marca,modelo,gama:$('#mGama').value.trim()||null,estado:$('#mEstado').value,
+    if(file) imagen_url=await subirImagen(file,'productos');
+    const payload={tipo,marca,modelo,gama,estado:$('#mEstado').value,
       caracteristicas,actualizado_en:new Date().toISOString()};
     if(imagen_url) payload.imagen_url=imagen_url;
     let res;
@@ -1084,7 +1150,7 @@ async function borrarModelo(id){
   if(error){toast('Error: '+error.message,true);return;}
   state.productos=state.productos.filter(x=>x.id!==id);
   state.precios=state.precios.filter(x=>x.producto_id!==id);
-  toast('Modelo eliminado'); pintarTablaModelos();
+  toast('Modelo eliminado'); pintarTablaModelos(true);
 }
 
 /* ---- Admin · Precios ---- */
